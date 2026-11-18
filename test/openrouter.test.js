@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "../public/ai-draft.js";
 
-const draft = { name: "Other name", faction: "tide", cost: 2, attack: 2, health: 2, ability: "haste", flavor: "A storm follows." };
+const draft = { name: "Other name", faction: "tide", cost: 2, attack: 2, health: 2, active1: "strike", active2: "siphon", ability: "haste", flavor: "A storm follows." };
 const reply = () => Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(draft) } }] });
 
 test("OpenRouter gets a structured brief and the returned card keeps its field locks", async () => {
@@ -18,8 +18,10 @@ test("OpenRouter gets a structured brief and the returned card keeps its field l
       assert.doesNotMatch(options.body, /sample-key/);
       const sent = JSON.parse(options.body);
       assert.equal(sent.model, OPENROUTER_DEFAULT_MODEL);
+      assert.equal(sent.model, "google/gemini-3.5-flash-lite");
       assert.equal(sent.provider.require_parameters, true);
       assert.equal(sent.response_format.json_schema.strict, true);
+      assert.ok(sent.response_format.json_schema.schema.required.includes("active2"));
       assert.equal(sent.messages[1].content.length, 1);
       assert.deepEqual(JSON.parse(sent.messages[1].content[0].text), brief);
       return reply();

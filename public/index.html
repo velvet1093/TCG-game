@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#110e17">
+  <meta name="theme-color" content="#101823">
   <meta name="description" content="Build your deck, create your own cards, and play an original three-lane card duel.">
   <title>Lanternwake Arena</title>
   <link rel="stylesheet" href="/styles.css">
@@ -38,7 +38,7 @@
         </div></div>
         <div class="studio-grid identity-fields">
           <div class="card-field"><label for="card-name">Card name</label><input id="card-name" name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></div>
-          <div class="card-field"><label for="card-faction">Faction</label><select id="card-faction" name="faction"></select></div>
+          <div class="card-field"><label for="card-faction">Element</label><select id="card-faction" name="faction"></select></div>
           <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
             <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
           <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>
@@ -74,12 +74,15 @@
           <p id="draft-status" role="status"></p>
         </section>
         <div class="studio-grid stat-fields">
-          <div class="card-field"><label for="card-cost">Pulse cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
+          <div class="card-field"><label for="card-cost">Deploy cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
           <div class="card-field"><label for="card-attack">Attack</label><input id="card-attack" type="number" name="attack" min="1" max="7" required></div>
           <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="1" max="9" required></div>
-          <div class="card-field wide"><label for="card-ability">Ability</label><select id="card-ability" name="ability"></select></div>
+          <div class="card-field wide"><label for="card-ability">Passive skill</label><select id="card-ability" name="ability"></select></div>
           <p class="field-help wide" id="ability-help"></p>
-          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A line of lore or dialogue"></textarea></div>
+          <div class="card-field"><label for="card-active1">Active skill 1</label><select id="card-active1" name="active1"></select><p class="field-help" id="active1-help"></p></div>
+          <div class="card-field"><label for="card-active2">Active skill 2</label><select id="card-active2" name="active2"></select><p class="field-help" id="active2-help"></p></div>
+          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A moment from this unit’s life"></textarea></div>
+          <button class="wide text-button" type="button" id="reroll-flavor" data-action="reroll-flavor">Suggest new flavor text</button>
         </div>
         <p id="budget" class="budget"></p>
         <p id="form-status" role="status" aria-live="polite"></p>
@@ -96,6 +99,10 @@
       <div id="dialog-preview"></div>
     </dialog>
   </template>
+  <dialog id="inspect-card" aria-labelledby="inspect-title">
+    <form method="dialog" class="studio-heading"><h2 id="inspect-title">Card details</h2><button aria-label="Close card details">Close</button></form>
+    <div id="inspect-content"></div>
+  </dialog>
   <dialog id="rules">
     <form method="dialog">
       <div class="studio-heading"><h2>How to play</h2><button aria-label="Close rules" value="close">Close</button></div>
@@ -103,7 +110,8 @@
         <li>Each Core starts at 20 health. Bring 15 cards and up to 3 copies of each card.</li>
         <li>Start with 4 cards and 2 Pulse. Your opening hand includes an affordable card if your deck has one. At the start of each turn, draw a card and refill Pulse. The first player skips the opening draw. Capacity grows by 1 each round, up to 6.</li>
         <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
-        <li>Each ready unit can strike straight across its lane or shift into an adjacent empty lane. Units trade damage on a strike. An open lane exposes the opposing Core.</li>
+        <li>Tap a ready unit to use one of its active skills or shift it to an adjacent empty lane. Some skills cost Pulse. A unit can act once per turn.</li>
+        <li>Offensive skills target the opposite lane. Units trade damage when they fight. An open lane exposes the opposing Core. Passive skills apply automatically.</li>
         <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 1 Core health when you would draw at the start of your turn.</li>
         <li>Reduce the rival Core to zero to win.</li>
       </ol>

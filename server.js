@@ -10,6 +10,7 @@ const assets = {
   "/ai-draft.js": ["ai-draft.js", "text/javascript"],
   "/cards.js": ["cards.js", "text/javascript"],
   "/engine.js": ["engine.js", "text/javascript"],
+  "/lore.js": ["lore.js", "text/javascript"],
   "/styles.css": ["styles.css", "text/css"],
 };
 
@@ -74,7 +75,7 @@ async function requestDraft(input, { apiKey, model, request }) {
       instructions: draftInstructions,
       input: [{ role: "user", content }],
       text: { format: { type: "json_schema", name: "arena_card", strict: true, schema: draftSchema } },
-      max_output_tokens: 600,
+      max_output_tokens: 800,
     }),
   });
   if (!response.ok) throw new Error("Provider error");

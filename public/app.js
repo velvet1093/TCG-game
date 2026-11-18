@@ -1,14 +1,15 @@
-import { ABILITIES, CARD_FIELDS, FIELD_LABELS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
-  cardIssues, deckIssue, fitDraft, lockedCardIssue, statBudget, templateDraft } from "./cards.js";
+import { ABILITIES, ACTIVE_SKILLS, CARD_FIELDS, FIELD_LABELS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+  activeSkills, cardIssues, deckIssue, fitDraft, lockedCardIssue, statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
+import { draftFlavor } from "./lore.js";
 
 const main = document.querySelector("#main");
 const section = (id) => document.querySelector(`#${id}-template`).content.cloneNode(true);
 const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
-  id: "", name: "", faction: "", cost: 2, attack: 2, health: 3, ability: "basic",
+  id: "", name: "", faction: "", cost: 2, attack: 2, health: 3, ability: "basic", active1: "strike", active2: "none",
   flavor: "", art: "", concept: "", shareArt: false, locks: [],
 });
 let file = blankCard();
@@ -17,8 +18,10 @@ let database;
 let writes = Promise.resolve();
 let storageWarning = "";
 let deckMessage = "";
+let collectionElement = "";
 let formMessage = "";
 let draftMessage = "";
+let loreVariant = 0;
 let revision = 0;
 let artJob = 0;
 let artLoading = false;
@@ -87,21 +90,36 @@ function artMarkup(card) {
   const validArt = typeof card.art === "string" && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(card.art);
   return validArt
     ? `<img class="card-art" src="${card.art}" alt="">`
-    : `<div class="card-art placeholder" aria-hidden="true"><span>${faction?.icon ?? "✧"}</span></div>`;
+    : `<span class="card-art placeholder" aria-hidden="true"><span>${faction?.icon ?? "✧"}</span></span>`;
+}
+
+function skillMarkup(id) {
+  const skill = ACTIVE_SKILLS[id];
+  return `<div class="card-skill"><div><strong>${skill.name}</strong><span class="skill-price" title="Pulse cost">✦ ${skill.pulse}</span></div>
+    <p>${skill.text}</p></div>`;
 }
 
 function cardMarkup(card) {
   const faction = factionOf(card);
   const name = escapeHTML(card.name || "Untitled unit");
   const ability = abilityOf(card);
-  return `<article class="game-card" style="--faction: ${faction?.color ?? "#aaa0ba"}">
-    <div class="card-top"><span>${faction?.icon ?? "✧"} ${faction?.name ?? "Choose faction"}</span><span class="cost" title="Pulse cost">${escapeHTML(card.cost || "–")}</span></div>
-    ${artMarkup(card)}
-    <div class="card-body"><h3>${name}</h3>
-    <div class="card-ability"><strong>${ability.name}</strong><p>${ability.text}</p></div>
-    ${card.flavor ? `<p class="flavor">${escapeHTML(card.flavor)}</p>` : ""}
-    <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")}</span><span title="Health">♥ ${escapeHTML(card.health || "–")}</span></div></div>
+  return `<article class="game-card" style="--faction: ${faction?.color ?? "#bdc8d6"}">
+    <header class="card-top"><div><span class="card-element">${faction?.icon ?? "✧"} ${faction?.name ?? "Unit"}</span><h3>${name}</h3></div>
+      <span class="card-hp" title="Health">${escapeHTML(card.health || "–")} <small>HP</small></span></header>
+    <div class="card-window">${artMarkup(card)}</div>
+    <div class="card-body">
+      <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
+      ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
+      ${activeSkills(card).map(skillMarkup).join("")}
+      ${card.flavor ? `<p class="flavor">${escapeHTML(card.flavor)}</p>` : ""}
+    </div>
   </article>`;
+}
+
+function inspectCard(card) {
+  const dialog = document.querySelector("#inspect-card");
+  document.querySelector("#inspect-content").innerHTML = cardMarkup(card);
+  dialog.showModal();
 }
 
 function render() {
@@ -137,68 +155,103 @@ function startDuel() {
   renderArena();
 }
 
-function coreMarkup(side, index) {
+function impactMarkup(impact) {
+  if (!impact || !impact.amount) return "";
+  return `<span class="hit-fx" aria-hidden="true">−${impact.amount}</span>`;
+}
+
+function coreMarkup(side, index, impact) {
   const name = index === 0 ? "Your Core" : "Rival Core";
   return `<div class="core-side ${index === 0 ? "player-core" : "rival-core"}"><div class="core-label"><span class="core-icon" aria-hidden="true">◈</span>
-    <div><h2>${name}</h2><span>${side.deck.length} in deck · ${side.hand.length} in hand</span></div></div>
+    <div><h2>${name}</h2><span class="core-counts">${side.deck.length} deck · ${side.hand.length} hand</span></div></div>
+    ${impactMarkup(impact?.core && impact.side === index ? impact : null)}
     <div class="core-health"><strong>${side.core}</strong><meter min="0" max="${LIMITS.core}" value="${side.core}" aria-label="${name} health"></meter></div></div>`;
 }
 
-function unitMarkup(unit, lane, own) {
-  if (!unit) return `<div class="empty-slot">${own ? "Empty slot" : "Open lane"}</div>`;
+function unitMarkup(unit, lane, own, action, impact) {
+  if (!unit) return `<div class="empty-slot">${action || '<span aria-hidden="true">◇</span><span>Open</span>'}${impactMarkup(impact)}</div>`;
   const { card } = unit;
   const faction = factionOf(card);
-  return `<div class="unit" style="--faction: ${faction.color}">${artMarkup(card)}
-    <div class="unit-info"><strong>${escapeHTML(card.name)}</strong>
-    <span class="unit-stats"><span title="Attack">⚔ ${card.attack}</span><span title="Health">♥ ${unit.health}</span></span>
-    <span class="unit-ability">${abilityOf(card).name}${own && !unit.ready ? " · Exhausted" : ""}</span></div>
-    ${own && unit.ready && game.winner === null ? `<button type="button" data-action="strike" data-lane="${lane}" aria-label="Strike with ${escapeHTML(card.name)}">Strike</button>` : ""}
-  </div>`;
+  const selected = own && selection?.type === "unit" && selection.lane === lane;
+  return `<div class="unit-slot">${impactMarkup(impact)}<button type="button" class="unit${selected ? " is-selected" : ""}"
+    style="--faction: ${faction.color}" data-action="${own ? "select-unit" : "inspect-rival"}" data-lane="${lane}"
+    aria-label="${own ? "Choose actions for" : "View"} ${escapeHTML(card.name)}, ${unit.health} health"${own ? ` aria-pressed="${selected}"` : ""}>
+    <span class="unit-head"><span aria-hidden="true">${faction.icon}</span><strong>${escapeHTML(card.name)}</strong></span>
+    <span class="unit-art-frame">${artMarkup(card)}</span>
+    <span class="unit-stats"><span title="Attack">⚔ ${card.attack}</span><span class="unit-hp" title="Health">${unit.health} HP</span></span>
+    ${own ? `<span class="ready-state ${unit.ready ? "is-ready" : ""}">${unit.ready ? "Ready" : "Exhausted"}</span>` : ""}
+    </button></div>`;
 }
 
 function actionButton(label, action, lane) {
-  return `<button type="button" data-action="${action}" data-lane="${lane}" aria-label="${label} to lane ${lane + 1}">${label}</button>`;
+  return `<button type="button" class="place-unit" data-action="${action}" data-lane="${lane}" aria-label="${label} to lane ${lane + 1}">${label}</button>`;
+}
+
+function unitTrayMarkup(unit, lane) {
+  const buttons = activeSkills(unit.card).map((id) => {
+    const skill = ACTIVE_SKILLS[id];
+    const issue = actionIssue(game, 0, { type: "skill", lane, skill: id });
+    return `<button type="button" data-action="skill" data-lane="${lane}" data-skill="${id}" ${issue ? "disabled" : ""}>
+      <span><strong>${skill.name}</strong><small>${issue || skill.text}</small></span><b class="skill-price">✦ ${skill.pulse}</b>
+    </button>`;
+  }).join("");
+  const shift = [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
+  return `<div class="unit-tray"><div class="tray-heading"><strong>${escapeHTML(unit.card.name)}</strong>
+    <button type="button" data-action="inspect-own" data-lane="${lane}">View card</button>
+    ${shift ? `<button type="button" data-action="select-shift" data-lane="${lane}">Shift</button>` : ""}</div>
+    ${buttons ? `<div class="skill-options">${buttons}</div>` : "<p>This unit has no active skills.</p>"}</div>`;
 }
 
 function renderArena(focus) {
   const arena = document.querySelector("#arena-game");
   if (!arena) return;
   if (!game) {
-    arena.innerHTML = `<section class="panel welcome"><div class="arena-emblem" aria-hidden="true">✦</div>
-      <h2>Enter the arena</h2><p>Challenge the rival with your active deck.</p>
+    arena.innerHTML = `<section class="panel welcome"><div class="arena-emblem" aria-hidden="true">◈</div>
+      <h2>Enter the arena</h2><p>Face the rival in a three-lane duel.</p>
       <button type="button" class="primary" data-action="duel">Start duel</button>
       <p role="status">${escapeHTML(arenaMessage)}</p></section>`;
     return;
   }
   const [player, rival] = game.sides;
+  const impact = game.impact;
+  game.impact = null;
   const handScroll = arena.querySelector(".hand-rail")?.scrollLeft ?? 0;
   const logOpen = arena.querySelector(".combat-log")?.open ?? !mobile.matches;
   const selected = selection?.type === "deploy" ? player.hand[selection.hand] : null;
+  const chosenUnit = selection?.type === "unit" ? player.board[selection.lane] : null;
   const result = game.winner === null ? "Your turn" : game.winner === 0 ? "Victory" : "Defeat";
   const lanes = player.board.map((unit, lane) => {
     const deploy = selection?.type === "deploy" && !actionIssue(game, 0, { ...selection, lane })
       ? actionButton("Deploy", "deploy", lane) : "";
     const shiftHere = selection?.type === "shift" && !actionIssue(game, 0, { ...selection, to: lane })
       ? actionButton("Move", "shift", lane) : "";
-    const canShift = unit?.ready && [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
-    const shift = canShift ? `<button type="button" data-action="select-shift" data-lane="${lane}" aria-pressed="${selection?.type === "shift" && selection.lane === lane}">Shift</button>` : "";
+    const hit = impact?.lane === lane && !impact.core ? impact : null;
     return `<div class="lane"><span class="lane-title">Lane ${lane + 1}</span>
-      ${unitMarkup(rival.board[lane], lane, false)}<div class="lane-divider" aria-hidden="true">◇</div>
-      ${unitMarkup(unit, lane, true)}${deploy || shiftHere || shift ? `<div class="lane-actions">${deploy}${shiftHere}${shift}</div>` : ""}</div>`;
+      ${unitMarkup(rival.board[lane], lane, false, "", hit?.side === 1 ? hit : null)}
+      <div class="lane-divider" aria-hidden="true"><span>◇</span></div>
+      ${unitMarkup(unit, lane, true, deploy || shiftHere, hit?.side === 0 ? hit : null)}</div>`;
   }).join("");
   const hand = player.hand.map((card, index) => {
     const active = selection?.type === "deploy" && selection.hand === index;
-    return `<div class="hand-item${active ? " selected" : ""}">${cardMarkup(card)}
-      <button type="button" class="hand-select" data-action="select-card" data-index="${index}" aria-label="Select ${escapeHTML(card.name)}" aria-pressed="${active}"
-        ${card.cost > player.pulse || game.winner !== null ? "disabled" : ""}>${active ? "Selected" : "Select"}</button></div>`;
+    return `<div class="hand-item${active ? " selected" : ""}${card.cost > player.pulse ? " unaffordable" : ""}">${cardMarkup(card)}
+      <button type="button" class="hand-select" data-action="select-card" data-index="${index}" aria-label="Select ${escapeHTML(card.name)}" aria-pressed="${active}">${active ? "Selected" : "Select"}</button></div>`;
   }).join("");
+  const guidance = selection?.type === "shift" ? "Choose an adjacent open lane." : selected
+    ? selected.cost > player.pulse ? `${selected.name} needs ${selected.cost} Pulse to deploy.`
+      : player.board.every(Boolean) ? "All three lanes are occupied." : `Deploy ${selected.name} to an open lane.`
+    : "Tap a card to deploy or a unit to act.";
+  const pulsePips = Array.from({ length: Math.max(player.capacity, player.pulse) }, (_, i) =>
+    `<i class="${i < player.pulse ? "charged" : ""}"></i>`).join("");
   arena.innerHTML = `<div class="arena-layout"><div>
     <section class="panel battlefield" aria-label="Duel board">
       <div class="battle-status"><div><span>Round ${game.round}</span><strong>${result}</strong></div>
-        <div><span>Pulse</span><strong class="pulse">✦ ${player.pulse}<small> / ${player.capacity}</small></strong></div></div>
-      ${coreMarkup(rival, 1)}<div class="lanes">${lanes}</div>${coreMarkup(player, 0)}
-      <div class="turn-controls"><p role="status">${escapeHTML(arenaMessage || (selection?.type === "shift" ? "Choose an adjacent empty lane." : selected ? `${selected.name} · ${abilityOf(selected).text} Choose an empty lane.` : ""))}</p>
-        <button type="button" class="primary" data-action="end" ${game.winner !== null ? "disabled" : ""}>End turn</button></div>
+        <div class="pulse"><span class="pulse-pips" aria-hidden="true">${pulsePips}</span><strong>${player.pulse} / ${player.capacity} Pulse</strong></div></div>
+      ${coreMarkup(rival, 1, impact)}<div class="lanes">${lanes}</div>${coreMarkup(player, 0, impact)}
+      ${chosenUnit ? unitTrayMarkup(chosenUnit, selection.lane) : ""}
+      <div class="turn-controls"><p role="status">${escapeHTML(arenaMessage || (!chosenUnit && game.winner === null ? guidance : ""))}</p>
+        ${selected ? `<button type="button" data-action="inspect-hand" data-index="${selection.hand}">View card</button>` : ""}
+        ${selection?.type === "shift" ? '<button type="button" data-action="cancel">Cancel</button>' : ""}
+        <button type="button" class="primary" data-action="${game.winner === null ? "end" : "duel"}">${game.winner === null ? "End turn" : "Rematch"}</button></div>
     </section>
     <section class="hand"><div class="section-head"><h2>Your hand</h2><span>${player.hand.length} cards</span></div>
       ${hand ? `<div class="hand-rail">${hand}</div>` : "<p>Your hand is empty.</p>"}</section>
@@ -214,19 +267,29 @@ function renderArena(focus) {
 }
 
 function handleArena(button) {
-  const { action, lane, index } = button.dataset;
+  const { action, lane, index, skill } = button.dataset;
   if (action === "duel") return startDuel();
   if (action === "rules") return document.querySelector("#rules").showModal();
-  if (!game || game.winner !== null) return;
+  if (!game) return;
+  if (action === "inspect-rival") return inspectCard(game.sides[1].board[Number(lane)].card);
+  if (action === "inspect-own") return inspectCard(game.sides[0].board[Number(lane)].card);
+  if (action === "inspect-hand") return inspectCard(game.sides[0].hand[Number(index)]);
+  if (game.winner !== null && action === "select-unit") return inspectCard(game.sides[0].board[Number(lane)].card);
+  if (game.winner !== null && action === "select-card") return inspectCard(game.sides[0].hand[Number(index)]);
+  if (game.winner !== null) return;
   arenaMessage = "";
   if (action === "select-card") {
     const hand = Number(index);
     selection = selection?.type === "deploy" && selection.hand === hand ? null : { type: "deploy", hand };
+  } else if (action === "select-unit") {
+    selection = selection?.type === "unit" && selection.lane === Number(lane) ? null : { type: "unit", lane: Number(lane) };
   } else if (action === "select-shift") {
-    selection = selection?.type === "shift" && selection.lane === Number(lane) ? null : { type: "shift", lane: Number(lane) };
+    selection = { type: "shift", lane: Number(lane) };
+  } else if (action === "cancel") {
+    selection = null;
   } else {
     const command = action === "deploy" ? { ...selection, lane: Number(lane) } :
-      action === "shift" ? { ...selection, to: Number(lane) } : { type: action, lane: Number(lane) };
+      action === "shift" ? { ...selection, to: Number(lane) } : { type: action, lane: Number(lane), skill };
     arenaMessage = act(game, 0, command);
     if (!arenaMessage) {
       selection = null;
@@ -238,17 +301,22 @@ function handleArena(button) {
 
 function renderDeck(focus) {
   const cards = catalog();
+  const visibleCards = collectionElement ? cards.filter((card) => card.faction === collectionElement) : cards;
   const issue = deckIssue(library.deck, cards);
   const deckOpen = main.querySelector(".deck-details")?.open ?? !mobile.matches;
   const counts = new Map();
   for (const id of library.deck) counts.set(id, (counts.get(id) ?? 0) + 1);
   main.innerHTML = `<section class="page-head"><div><h1>Deck &amp; collection</h1><p>Choose the 15 cards you want to bring to the arena.</p></div>
     <div class="head-actions"><a href="#studio" class="button primary">Create a card</a></div></section>
-    <div class="deck-layout"><section><div class="section-head"><h2>Collection</h2><span>${cards.length} cards</span></div>
-      <div class="collection-grid">${cards.map((card) => {
+    <div class="deck-layout"><section><div class="section-head"><h2>Collection <small>${visibleCards.length} cards</small></h2>
+      <select id="collection-element" aria-label="Filter collection by element"><option value="">All elements</option>
+        ${Object.entries(FACTIONS).map(([id, element]) => `<option value="${id}" ${collectionElement === id ? "selected" : ""}>${element.name}</option>`).join("")}</select>
+      </div><div class="collection-grid">${visibleCards.map((card) => {
         const id = escapeHTML(card.id);
         const name = escapeHTML(card.name);
-        return `<div class="collection-item">${cardMarkup(card)}<div class="collection-tools">
+        return `<div class="collection-item"><div class="collection-face">${cardMarkup(card)}
+          <button type="button" class="card-inspect" data-action="inspect" data-id="${id}" aria-label="View ${name}"></button>
+          </div><div class="collection-tools">
           <button type="button" data-action="add" data-id="${id}" aria-label="Add ${name}" ${library.deck.length >= LIMITS.deck || (counts.get(card.id) ?? 0) >= LIMITS.copies ? "disabled" : ""}>＋ Add</button>
           ${STARTER_CARDS.includes(card) ? "" : `<button type="button" data-action="edit" data-id="${id}" aria-label="Edit ${name}">Edit</button>`}</div></div>`;
       }).join("")}</div></section>
@@ -274,6 +342,11 @@ function renderDeck(focus) {
 
 async function handleDeck(button) {
   const { action, id } = button.dataset;
+  if (action === "inspect") {
+    const card = catalog().find((item) => item.id === id);
+    if (card) inspectCard(card);
+    return;
+  }
   if (action === "edit") {
     const card = library.cards.find((item) => item.id === id);
     if (!card) return;
@@ -305,6 +378,7 @@ function replaceFile(next) {
   artJob++;
   artLoading = false;
   file = next;
+  loreVariant = 0;
   formMessage = "";
   draftMessage = "";
 }
@@ -314,9 +388,12 @@ function mountStudio() {
   form.elements["openrouter-key"].value = openRouterKey;
   form.elements.openRouterModel.value = openRouterModel;
   form.elements.openRouterModel.placeholder = OPENROUTER_DEFAULT_MODEL;
-  form.elements.faction.append(new Option("Choose faction", ""));
+  form.elements.faction.append(new Option("Choose element", ""));
   for (const [id, faction] of Object.entries(FACTIONS)) form.elements.faction.append(new Option(faction.name, id));
   for (const [id, ability] of Object.entries(ABILITIES)) form.elements.ability.append(new Option(ability.name, id));
+  for (const field of ["active1", "active2"]) {
+    for (const [id, skill] of Object.entries(ACTIVE_SKILLS)) form.elements[field].append(new Option(skill.name, id));
+  }
   for (const field of CARD_FIELDS) {
     const button = document.createElement("button");
     button.type = "button";
@@ -360,6 +437,11 @@ function updateStudio() {
   }
   const ability = abilityOf(file);
   document.querySelector("#ability-help").textContent = ability.text;
+  for (const field of ["active1", "active2"]) {
+    const skill = ACTIVE_SKILLS[file[field]];
+    document.querySelector(`#${field}-help`).textContent = skill?.pulse ? `${skill.pulse} Pulse · ${skill.text}` : skill?.text ?? "";
+  }
+  document.querySelector("#reroll-flavor").disabled = file.locks.includes("flavor");
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
   const available = statBudget(Number(file.cost) || 0);
   const budget = document.querySelector("#budget");
@@ -443,7 +525,7 @@ function draftBrief() {
 function quickFill() {
   try {
     const brief = draftBrief();
-    applyDraft(templateDraft(brief), brief.locked);
+    applyDraft(templateDraft({ ...brief, variant: loreVariant++ }), brief.locked);
     draftMessage = "Quick fill applied. Review the draft before saving.";
   } catch (error) {
     draftMessage = error.message;
@@ -562,6 +644,12 @@ main.addEventListener("click", (event) => {
     case "quick-fill":
       quickFill();
       break;
+    case "reroll-flavor":
+      revision++;
+      file.flavor = draftFlavor(file, file.concept, ++loreVariant);
+      formMessage = "New flavor text suggested.";
+      syncStudioFields();
+      break;
     case "ai-fill":
       void autoFill();
       break;
@@ -593,6 +681,11 @@ main.addEventListener("input", (event) => {
 });
 
 main.addEventListener("change", (event) => {
+  if (event.target.id === "collection-element") {
+    collectionElement = event.target.value;
+    renderDeck();
+    document.querySelector("#collection-element").focus({ preventScroll: true });
+  }
   if (event.target.matches('[name="artwork"]') && event.target.files[0]) void readArtwork(event.target.files[0]);
 });
 

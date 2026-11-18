@@ -37,7 +37,7 @@ test("the server requests structured text with optional art and validates return
   const reply = await post(url, { name: "Test Card", faction: "tide", concept: "Water mage" });
   assert.equal(reply.status, 200);
   assert.deepEqual((await reply.json()).draft, {
-    name: "Test Card", faction: "tide", cost: 2, attack: 3, health: 1, ability: "draw", flavor: "Moonfall.",
+    name: "Test Card", faction: "tide", cost: 2, attack: 3, health: 1, active1: "strike", active2: "none", ability: "draw", flavor: "Moonfall.",
   });
   assert.equal(sent.text.format.strict, true);
   assert.equal(sent.store, false);

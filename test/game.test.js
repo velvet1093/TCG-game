@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { STARTER_CARDS, STARTER_DECK, RIVAL_DECK, cardIssues, deckIssue, templateDraft } from "../public/cards.js";
+import { STARTER_CARDS, STARTER_DECK, RIVAL_DECK, activeSkills, cardIssues, deckIssue, templateDraft } from "../public/cards.js";
 import { act, createGame, playRival } from "../public/engine.js";
 
 const start = () => createGame(STARTER_CARDS, STARTER_DECK, RIVAL_DECK, () => 0.999);
@@ -46,6 +46,29 @@ test("Quick fill drafts around fixed stats and identifies impossible locks", () 
   assert.deepEqual(cardIssues(draft), []);
   assert.throws(() => templateDraft({ locked: { cost: 1, attack: 3, ability: "guard" } }), /locked values exceed/);
   assert.throws(() => templateDraft({ locked: { name: "" } }), /locked card name/);
+});
+
+test("legacy cards keep Strike and drafts preserve up to two distinct skill slots", () => {
+  const { active1, active2, ...legacy } = STARTER_CARDS[0];
+  assert.deepEqual(cardIssues(legacy), []);
+  assert.deepEqual(activeSkills(legacy), ["strike"]);
+  assert.match(cardIssues({ ...legacy, active1, active2: active1 })[0], /different active skills/);
+  const draft = templateDraft({ concept: "storm rider", locked: { active2: "strike", ability: "draw" } });
+  assert.equal(draft.active2, "strike");
+  assert.equal(draft.ability, "draw");
+  assert.deepEqual(activeSkills(draft), ["strike"]);
+  assert.throws(() => templateDraft({ locked: { active1: "strike", active2: "strike" } }), /duplicate active skill/);
+});
+
+test("Quick fill uses elements and concrete settings in varied flavor text", () => {
+  assert.equal(templateDraft({ concept: "snow pilgrim" }).faction, "frost");
+  assert.equal(templateDraft({ concept: "copper mechanic" }).faction, "alloy");
+  const brief = { name: "Temple Watch", concept: "a lightning guard at the shrine" };
+  const first = templateDraft(brief);
+  assert.equal(first.faction, "storm");
+  assert.match(first.flavor, /shrine/i);
+  assert.notEqual(first.flavor, templateDraft({ ...brief, variant: 1 }).flavor);
+  assert.ok(first.flavor.length <= 140);
 });
 
 test("deploy and strike charge Pulse and respect unit readiness", () => {
@@ -118,4 +141,35 @@ test("the rival plays legal turns and fatigue breaks empty-deck stalemates", () 
   act(game, 0, { type: "end" });
   act(game, 1, { type: "end" });
   assert.equal(game.winner, 1);
+});
+
+test("active skills use Pulse, enforce membership and consume a unit's action", () => {
+  const game = start();
+  const [player, rival] = game.sides;
+  player.board[0] = unit("sun");
+  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "sweep" }), /isn’t on this card/);
+  player.pulse = 0;
+  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "lunge" }), /more Pulse/);
+  player.pulse = 2;
+  rival.board[0] = unit("tidevault");
+  assert.equal(act(game, 0, { type: "skill", lane: 0, skill: "lunge" }), "");
+  assert.equal(player.pulse, 1);
+  assert.equal(rival.board[0].health, 1);
+  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "strike" }), /ready/);
+});
+
+test("Sweep hits adjacent rival units and Recover heals without counting toward a chain", () => {
+  const game = start();
+  const [player, rival] = game.sides;
+  player.board[1] = unit("static");
+  player.board[2] = { ...unit("ivy"), health: 3 };
+  rival.board[0] = unit("foam");
+  rival.board[2] = unit("cedar");
+  assert.equal(act(game, 0, { type: "skill", lane: 1, skill: "sweep" }), "");
+  assert.equal(rival.board[0], null);
+  assert.equal(rival.board[2].health, 2);
+  assert.equal(act(game, 0, { type: "skill", lane: 2, skill: "recover" }), "");
+  assert.equal(player.board[2].health, 6);
+  assert.equal(player.pulse, 0);
+  assert.deepEqual(game.struck, [1]);
 });

@@ -1,4 +1,4 @@
-import { LIMITS, deckIssue } from "./cards.js";
+import { ACTIVE_SKILLS, LIMITS, activeSkills, deckIssue } from "./cards.js";
 
 const labels = ["You", "Rival"];
 const logLimit = 35;
@@ -90,7 +90,15 @@ export function actionIssue(game, sideIndex, action) {
     if (card.cost > side.pulse) return "You need more Pulse.";
     return "";
   }
-  if (action.type === "strike") return side.board[action.lane]?.ready ? "" : "That unit needs to ready.";
+  if (action.type === "strike" || action.type === "skill") {
+    const unit = side.board[action.lane];
+    if (!unit?.ready) return "That unit needs to ready.";
+    const id = action.type === "strike" ? "strike" : action.skill;
+    if (!activeSkills(unit.card).includes(id)) return "That skill isn’t on this card.";
+    if (side.pulse < ACTIVE_SKILLS[id].pulse) return "You need more Pulse.";
+    if (id === "recover" && unit.health >= unit.card.health) return "This unit is already at full health.";
+    return "";
+  }
   if (action.type === "shift") {
     if (!side.board[action.lane]?.ready) return "That unit needs to ready.";
     if (!Number.isInteger(action.to) || action.to < 0 || action.to >= LIMITS.lanes ||
@@ -133,21 +141,48 @@ export function act(game, sideIndex, action) {
       log(game, `${unit.card.name} shifts to lane ${action.to + 1}.`);
       break;
     }
-    case "strike": {
+    case "strike":
+    case "skill": {
       const unit = side.board[lane];
       const target = opponent.board[lane];
+      const id = action.type === "strike" ? "strike" : action.skill;
+      const skill = ACTIVE_SKILLS[id];
       unit.ready = false;
+      side.pulse -= skill.pulse;
+      if (id === "recover") {
+        const restored = Math.min(3, unit.card.health - unit.health);
+        unit.health += restored;
+        log(game, `${unit.card.name} uses Recover and restores ${restored} health.`);
+        break;
+      }
+      const power = unit.card.attack + skill.bonus;
+      const damage = power - Number(target?.card.ability === "guard");
+      const attackName = id === "strike" ? "strikes" : `uses ${skill.name} on`;
+      game.impact = { side: 1 - sideIndex, lane, amount: damage, core: !target };
       if (target) {
-        const damage = unit.card.attack - Number(target.card.ability === "guard");
         const counter = target.card.attack - Number(unit.card.ability === "guard");
         target.health -= damage;
         unit.health -= counter;
-        log(game, `${unit.card.name} strikes ${target.card.name} for ${damage} (${counter} returned).`);
+        log(game, `${unit.card.name} ${attackName} ${target.card.name} for ${damage} (${counter} returned).`);
         clearLane(game, side, lane);
         clearLane(game, opponent, lane);
       } else {
-        opponent.core = Math.max(0, opponent.core - unit.card.attack);
-        log(game, `${unit.card.name} hits the Core for ${unit.card.attack}.`);
+        opponent.core = Math.max(0, opponent.core - damage);
+        log(game, `${unit.card.name} ${attackName} the Core for ${damage}.`);
+      }
+      if (id === "siphon" && damage > 0) {
+        const restored = Math.min(2, LIMITS.core - side.core);
+        side.core += restored;
+        if (restored) log(game, `Siphon restores ${restored} Core health.`);
+      }
+      if (id === "sweep") {
+        for (const adjacent of [lane - 1, lane + 1]) {
+          const neighbor = opponent.board[adjacent];
+          if (!neighbor) continue;
+          neighbor.health--;
+          log(game, `Sweep deals 1 damage to ${neighbor.card.name}.`);
+          clearLane(game, opponent, adjacent);
+        }
       }
       if (!game.struck.includes(lane)) {
         game.struck.push(lane);
@@ -170,13 +205,26 @@ function rankBotActions(game) {
     const unit = side.board[lane];
     const target = opponent.board[lane];
     if (unit?.ready) {
-      let score = opponent.core <= unit.card.attack ? 100 : 8 + unit.card.attack;
-      if (target) {
-        const kills = unit.card.attack - Number(target.card.ability === "guard") >= target.health;
-        const survives = target.card.attack - Number(unit.card.ability === "guard") < unit.health;
-        score = (kills ? 9 + target.card.cost : 3) - (survives ? 0 : 5 + unit.card.cost / 2);
+      for (const id of activeSkills(unit.card)) {
+        const action = { type: "skill", lane, skill: id };
+        if (actionIssue(game, 1, action)) continue;
+        const skill = ACTIVE_SKILLS[id];
+        const power = unit.card.attack + skill.bonus;
+        const damage = power - Number(target?.card.ability === "guard");
+        let score = opponent.core <= power ? 100 : 8 + power;
+        if (target) {
+          const kills = damage >= target.health;
+          const survives = target.card.attack - Number(unit.card.ability === "guard") < unit.health;
+          score = (kills ? 9 + target.card.cost : 1 + damage) - (survives ? 0 : 5 + unit.card.cost / 2);
+        }
+        if (id === "recover") score = Math.min(3, unit.card.health - unit.health);
+        if (id === "siphon" && damage > 0) score += Math.min(2, LIMITS.core - side.core);
+        if (id === "sweep") {
+          score += [opponent.board[lane - 1], opponent.board[lane + 1]]
+            .reduce((total, neighbor) => total + (neighbor?.health === 1 ? 4 : neighbor ? 1.5 : 0), 0);
+        }
+        options.push({ score: score - skill.pulse * 0.8, action });
       }
-      options.push({ score, action: { type: "strike", lane } });
       for (const to of [lane - 1, lane + 1]) {
         const action = { type: "shift", lane, to };
         if (target && !opponent.board[to] && !actionIssue(game, 1, action)) options.push({ score: 1, action });
