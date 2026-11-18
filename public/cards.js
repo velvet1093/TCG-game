@@ -16,30 +16,78 @@ export const ABILITIES = {
 
 export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
 export const CARD_FIELDS = ["name", "faction", "cost", "attack", "health", "ability", "flavor"];
+export const FIELD_LABELS = {
+  name: "Card name", faction: "Faction", cost: "Pulse cost", attack: "Attack",
+  health: "Health", ability: "Ability", flavor: "Flavor text",
+};
+const statRanges = { cost: [1, 6], attack: [1, 7], health: [1, 9] };
 
 export function statBudget(cost) {
   return cost * 2 + 2;
 }
 
+function fieldIssue(field, value) {
+  if (field === "name" && (typeof value !== "string" || !value.trim() || value.length > 44)) {
+    return "Enter a name of 1–44 characters.";
+  }
+  if (field === "faction" && (typeof value !== "string" || !Object.hasOwn(FACTIONS, value))) return "Choose a faction.";
+  if (field === "ability" && (typeof value !== "string" || !Object.hasOwn(ABILITIES, value))) return "Choose an ability.";
+  if (field === "flavor" && (typeof value !== "string" || value.length > 140)) {
+    return "Keep flavor text within 140 characters.";
+  }
+  if (Object.hasOwn(statRanges, field)) {
+    const [min, max] = statRanges[field];
+    if (!Number.isInteger(value) || value < min || value > max) return `${FIELD_LABELS[field]} must be ${min}–${max}.`;
+  }
+  return "";
+}
+
 export function cardIssues(card) {
-  const issues = [];
-  if (typeof card.name !== "string" || !card.name.trim() || card.name.length > 44) {
-    issues.push("Enter a name of 1–44 characters.");
-  }
-  if (!Object.hasOwn(FACTIONS, card.faction)) issues.push("Choose a faction.");
-  if (!Object.hasOwn(ABILITIES, card.ability)) issues.push("Choose an ability.");
-  for (const [field, min, max] of [["cost", 1, 6], ["attack", 1, 7], ["health", 1, 9]]) {
-    if (!Number.isInteger(card[field]) || card[field] < min || card[field] > max) {
-      issues.push(`${field[0].toUpperCase() + field.slice(1)} must be ${min}–${max}.`);
-    }
-  }
-  if (typeof card.flavor !== "string" || card.flavor.length > 140) {
-    issues.push("Keep flavor text within 140 characters.");
-  }
+  const issues = CARD_FIELDS.map((field) => fieldIssue(field, card[field])).filter(Boolean);
   if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost)) {
     issues.push("Reduce the stats or increase the Pulse cost to stay within budget.");
   }
   return issues;
+}
+
+export function lockedCardIssue(locked) {
+  for (const field of CARD_FIELDS) {
+    if (!Object.hasOwn(locked, field)) continue;
+    const issue = fieldIssue(field, locked[field]);
+    if (issue) return `Check the locked ${FIELD_LABELS[field].toLowerCase()}. ${issue}`;
+  }
+  const minimum = (locked.attack ?? 1) + (locked.health ?? 1) + (ABILITIES[locked.ability]?.weight ?? 0);
+  if (minimum > statBudget(locked.cost ?? 6)) {
+    return "The locked values exceed the stat budget. Unlock a stat, ability, or Pulse cost.";
+  }
+  return "";
+}
+
+// Fit the proposed card around the locks. Prefer the proposed ability, then
+// the proposed cost. Trim unlocked stats before raising an unlocked cost.
+export function fitDraft(draft, locked = {}) {
+  const issue = lockedCardIssue(locked);
+  if (issue) throw new Error(issue);
+  const card = Object.fromEntries(CARD_FIELDS.map((key) => [key, Object.hasOwn(locked, key) ? locked[key] : draft[key]]));
+  for (const [key, [min, max]] of Object.entries(statRanges)) {
+    if (Number.isInteger(card[key])) card[key] = Math.min(max, Math.max(min, card[key]));
+  }
+  const minAttack = locked.attack ?? 1;
+  const minHealth = locked.health ?? 1;
+  const abilities = Object.hasOwn(locked, "ability") ? [locked.ability] : [...new Set([card.ability, "basic"])];
+  const costs = Object.hasOwn(locked, "cost") ? [locked.cost] : [1, 2, 3, 4, 5, 6].filter((cost) => cost >= card.cost);
+  for (const ability of abilities) {
+    if (!Object.hasOwn(ABILITIES, ability)) continue;
+    for (const cost of costs) {
+      const room = statBudget(cost) - ABILITIES[ability].weight;
+      if (room < minAttack + minHealth) continue;
+      const attack = Math.min(card.attack, room - minHealth);
+      const health = Math.min(card.health, room - attack);
+      const fitted = { ...card, cost, attack, health, ability };
+      if (cardIssues(fitted).length === 0) return fitted;
+    }
+  }
+  throw new Error(cardIssues(card)[0] || "Couldn’t generate a valid card.");
 }
 
 const sample = (id, name, faction, cost, attack, health, ability, flavor) =>
@@ -90,15 +138,19 @@ const archetypes = {
   veil: { name: "Twilight Herald", ability: "haste", flavor: "The hour between shadows belongs to them." },
 };
 
-export function templateDraft({ name, faction, concept }) {
-  const theme = concept.toLowerCase();
-  const inferred = [
-    ["ember", /fire|flame|ash|lava|blaze|sun/],
-    ["tide", /water|ice|ocean|river|mist|wave/],
-    ["grove", /tree|wood|nature|plant|forest|vine/],
-    ["veil", /shadow|ghost|dark|void|moon/],
-  ].find(([, pattern]) => pattern.test(theme));
-  const selected = Object.hasOwn(FACTIONS, faction) ? faction : inferred?.[0] ?? "veil";
+export function templateDraft({ name = "", faction = "", concept = "", locked = {} }) {
+  const issue = lockedCardIssue(locked);
+  if (issue) throw new Error(issue);
+  const theme = `${concept} ${locked.name ?? name} ${locked.flavor ?? ""}`.toLowerCase();
+  const elements = [
+    ["ember", /fire|flame|ash|lava|blaze|sun|ember/],
+    ["tide", /water|ice|ocean|river|mist|wave|tide/],
+    ["grove", /tree|wood|nature|plant|forest|vine|grove/],
+    ["veil", /shadow|ghost|dark|void|moon|veil/],
+  ];
+  const fromConcept = elements.find(([, pattern]) => pattern.test(concept.toLowerCase()))?.[0];
+  const fromTheme = elements.find(([, pattern]) => pattern.test(theme))?.[0];
+  const selected = locked.faction ?? fromConcept ?? (Object.hasOwn(FACTIONS, faction) ? faction : fromTheme ?? "veil");
   const preset = archetypes[selected];
   const role = [
     ["guard", /tank|guard|shield|defend/],
@@ -107,9 +159,9 @@ export function templateDraft({ name, faction, concept }) {
     ["draw", /draw|support|study|scout/],
     ["ping", /blast|burn|damage|strike/],
   ].find(([, pattern]) => pattern.test(theme));
-  const ability = role?.[0] ?? preset.ability;
-  const cost = /legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3;
+  const ability = locked.ability ?? role?.[0] ?? preset.ability;
+  const cost = locked.cost ?? (/legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
   const stats = statBudget(cost) - ABILITIES[ability].weight;
   const attack = Math.min(7, Math.max(1, Math.floor(stats / 2) + (ability === "haste" ? 1 : ability === "guard" ? -1 : 0)));
-  return { name: name || preset.name, faction: selected, cost, attack, health: stats - attack, ability, flavor: preset.flavor };
+  return fitDraft({ name: preset.name, faction: selected, cost, attack, health: stats - attack, ability, flavor: preset.flavor }, locked);
 }

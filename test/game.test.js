@@ -20,10 +20,32 @@ test("starter cards and decks follow the same rules as custom cards", () => {
 
 test("offline drafts fit the card budget across roles and factions", () => {
   for (const concept of ["fire speed", "wood tank", "tiny ice medic", "giant shadow healer", "water scout", ""]) {
-    const draft = templateDraft({ name: "My Card", faction: "", concept });
+    const draft = templateDraft({ concept, locked: { name: "My Card" } });
     assert.equal(draft.name, "My Card");
     assert.deepEqual(cardIssues(draft), []);
   }
+});
+
+test("Quick fill uses a locked name as context and preserves locked values", () => {
+  const locked = { name: "Forest Guardian", attack: 5, flavor: "" };
+  const draft = templateDraft({ name: locked.name, locked });
+  assert.equal(draft.name, locked.name);
+  assert.equal(draft.faction, "grove");
+  assert.equal(draft.ability, "guard");
+  assert.equal(draft.attack, 5);
+  assert.equal(draft.flavor, "");
+  assert.deepEqual(cardIssues(draft), []);
+  assert.notEqual(templateDraft({ name: locked.name }).name, locked.name);
+});
+
+test("Quick fill drafts around fixed stats and identifies impossible locks", () => {
+  const locked = { cost: 1, attack: 3 };
+  const draft = templateDraft({ concept: "forest guard", locked });
+  assert.deepEqual({ cost: draft.cost, attack: draft.attack, health: draft.health, ability: draft.ability },
+    { cost: 1, attack: 3, health: 1, ability: "basic" });
+  assert.deepEqual(cardIssues(draft), []);
+  assert.throws(() => templateDraft({ locked: { cost: 1, attack: 3, ability: "guard" } }), /locked values exceed/);
+  assert.throws(() => templateDraft({ locked: { name: "" } }), /locked card name/);
 });
 
 test("deploy and strike charge Pulse and respect unit readiness", () => {

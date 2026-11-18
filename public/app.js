@@ -1,5 +1,5 @@
-import { ABILITIES, CARD_FIELDS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
-  cardIssues, deckIssue, statBudget, templateDraft } from "./cards.js";
+import { ABILITIES, CARD_FIELDS, FIELD_LABELS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+  cardIssues, deckIssue, fitDraft, lockedCardIssue, statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
 
 const main = document.querySelector("#main");
@@ -8,7 +8,7 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
   id: "", name: "", faction: "", cost: 2, attack: 2, health: 3, ability: "basic",
-  flavor: "", art: "", concept: "", shareArt: false,
+  flavor: "", art: "", concept: "", shareArt: false, locks: [],
 });
 let file = blankCard();
 let library = { cards: [], deck: [...STARTER_DECK] };
@@ -17,6 +17,7 @@ let writes = Promise.resolve();
 let storageWarning = "";
 let deckMessage = "";
 let formMessage = "";
+let draftMessage = "";
 let revision = 0;
 let artJob = 0;
 let artLoading = false;
@@ -31,6 +32,8 @@ let tab;
 const catalog = () => [...STARTER_CARDS, ...library.cards];
 const factionOf = (card) => Object.hasOwn(FACTIONS, card.faction) ? FACTIONS[card.faction] : null;
 const abilityOf = (card) => Object.hasOwn(ABILITIES, card.ability) ? ABILITIES[card.ability] : ABILITIES.basic;
+const mobile = matchMedia("(max-width: 610px)");
+const lockedFields = () => Object.fromEntries(CARD_FIELDS.filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
 
 function openStorage() {
   return new Promise((resolve, reject) => {
@@ -97,6 +100,7 @@ function cardMarkup(card) {
 }
 
 function render() {
+  const previousTab = tab;
   tab = ["arena", "deck", "studio"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "arena";
   for (const link of document.querySelectorAll("[data-tab]")) {
     if (link.dataset.tab === tab) link.setAttribute("aria-current", "page");
@@ -112,6 +116,7 @@ function render() {
     main.replaceChildren(section("studio"));
     mountStudio();
   }
+  if (tab !== previousTab) window.scrollTo(0, 0);
 }
 
 function startDuel() {
@@ -129,7 +134,7 @@ function startDuel() {
 
 function coreMarkup(side, index) {
   const name = index === 0 ? "Your Core" : "Rival Core";
-  return `<div class="core-side"><div class="core-label"><span class="core-icon" aria-hidden="true">◈</span>
+  return `<div class="core-side ${index === 0 ? "player-core" : "rival-core"}"><div class="core-label"><span class="core-icon" aria-hidden="true">◈</span>
     <div><h2>${name}</h2><span>${side.deck.length} in deck · ${side.hand.length} in hand</span></div></div>
     <div class="core-health"><strong>${side.core}</strong><meter min="0" max="${LIMITS.core}" value="${side.core}" aria-label="${name} health"></meter></div></div>`;
 }
@@ -140,13 +145,14 @@ function unitMarkup(unit, lane, own) {
   const faction = factionOf(card);
   return `<div class="unit" style="--faction: ${faction.color}">${artMarkup(card)}
     <div class="unit-info"><strong>${escapeHTML(card.name)}</strong>
-    <span>${abilityOf(card).name} · ⚔ ${card.attack} · ♥ ${unit.health}</span></div>
-    ${own ? `<button type="button" data-action="strike" data-lane="${lane}" ${unit.ready && game.winner === null ? "" : "disabled"}>${unit.ready ? "Strike" : "Exhausted"}</button>` : ""}
+    <span class="unit-stats"><span title="Attack">⚔ ${card.attack}</span><span title="Health">♥ ${unit.health}</span></span>
+    <span class="unit-ability">${abilityOf(card).name}${own && !unit.ready ? " · Exhausted" : ""}</span></div>
+    ${own && unit.ready && game.winner === null ? `<button type="button" data-action="strike" data-lane="${lane}" aria-label="Strike with ${escapeHTML(card.name)}">Strike</button>` : ""}
   </div>`;
 }
 
-function actionButton(label, action, lane, issue) {
-  return `<button type="button" data-action="${action}" data-lane="${lane}" ${issue ? `disabled title="${escapeHTML(issue)}"` : ""}>${label}</button>`;
+function actionButton(label, action, lane) {
+  return `<button type="button" data-action="${action}" data-lane="${lane}" aria-label="${label} to lane ${lane + 1}">${label}</button>`;
 }
 
 function renderArena(focus) {
@@ -160,12 +166,15 @@ function renderArena(focus) {
     return;
   }
   const [player, rival] = game.sides;
+  const handScroll = arena.querySelector(".hand-rail")?.scrollLeft ?? 0;
+  const logOpen = arena.querySelector(".combat-log")?.open ?? !mobile.matches;
+  const selected = selection?.type === "deploy" ? player.hand[selection.hand] : null;
   const result = game.winner === null ? "Your turn" : game.winner === 0 ? "Victory" : "Defeat";
   const lanes = player.board.map((unit, lane) => {
-    const deploy = selection?.type === "deploy"
-      ? actionButton("Deploy here", "deploy", lane, actionIssue(game, 0, { ...selection, lane })) : "";
-    const shiftHere = selection?.type === "shift"
-      ? actionButton("Shift here", "shift", lane, actionIssue(game, 0, { ...selection, to: lane })) : "";
+    const deploy = selection?.type === "deploy" && !actionIssue(game, 0, { ...selection, lane })
+      ? actionButton("Deploy", "deploy", lane) : "";
+    const shiftHere = selection?.type === "shift" && !actionIssue(game, 0, { ...selection, to: lane })
+      ? actionButton("Move", "shift", lane) : "";
     const canShift = unit?.ready && [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
     const shift = canShift ? `<button type="button" data-action="select-shift" data-lane="${lane}" aria-pressed="${selection?.type === "shift" && selection.lane === lane}">Shift</button>` : "";
     return `<div class="lane"><span class="lane-title">Lane ${lane + 1}</span>
@@ -175,7 +184,7 @@ function renderArena(focus) {
   const hand = player.hand.map((card, index) => {
     const active = selection?.type === "deploy" && selection.hand === index;
     return `<div class="hand-item${active ? " selected" : ""}">${cardMarkup(card)}
-      <button type="button" data-action="select-card" data-index="${index}" aria-label="Select ${escapeHTML(card.name)}" aria-pressed="${active}"
+      <button type="button" class="hand-select" data-action="select-card" data-index="${index}" aria-label="Select ${escapeHTML(card.name)}" aria-pressed="${active}"
         ${card.cost > player.pulse || game.winner !== null ? "disabled" : ""}>${active ? "Selected" : "Select"}</button></div>`;
   }).join("");
   arena.innerHTML = `<div class="arena-layout"><div>
@@ -183,12 +192,14 @@ function renderArena(focus) {
       <div class="battle-status"><div><span>Round ${game.round}</span><strong>${result}</strong></div>
         <div><span>Pulse</span><strong class="pulse">✦ ${player.pulse}<small> / ${player.capacity}</small></strong></div></div>
       ${coreMarkup(rival, 1)}<div class="lanes">${lanes}</div>${coreMarkup(player, 0)}
-      <div class="turn-controls"><p role="status">${escapeHTML(arenaMessage || (selection?.type === "shift" ? "Choose an adjacent empty lane." : selection ? "Choose an empty lane." : ""))}</p>
+      <div class="turn-controls"><p role="status">${escapeHTML(arenaMessage || (selection?.type === "shift" ? "Choose an adjacent empty lane." : selected ? `${selected.name} · ${abilityOf(selected).text} Choose an empty lane.` : ""))}</p>
         <button type="button" class="primary" data-action="end" ${game.winner !== null ? "disabled" : ""}>End turn</button></div>
     </section>
     <section class="hand"><div class="section-head"><h2>Your hand</h2><span>${player.hand.length} cards</span></div>
       ${hand ? `<div class="hand-rail">${hand}</div>` : "<p>Your hand is empty.</p>"}</section>
-    </div><aside class="panel combat-log"><h2>Duel log</h2><ol>${game.log.map((entry) => `<li>${escapeHTML(entry)}</li>`).join("")}</ol></aside></div>`;
+    </div><details class="panel combat-log" ${logOpen ? "open" : ""}><summary>Duel log</summary><ol>${game.log.map((entry) => `<li>${escapeHTML(entry)}</li>`).join("")}</ol></details></div>`;
+  const rail = arena.querySelector(".hand-rail");
+  if (rail) rail.scrollLeft = handScroll;
   if (focus) {
     const same = [...arena.querySelectorAll("[data-action]")].find((button) =>
       button.dataset.action === focus.action && button.dataset.lane === focus.lane &&
@@ -223,6 +234,7 @@ function handleArena(button) {
 function renderDeck(focus) {
   const cards = catalog();
   const issue = deckIssue(library.deck, cards);
+  const deckOpen = main.querySelector(".deck-details")?.open ?? !mobile.matches;
   const counts = new Map();
   for (const id of library.deck) counts.set(id, (counts.get(id) ?? 0) + 1);
   main.innerHTML = `<section class="page-head"><div><h1>Deck &amp; collection</h1><p>Choose the 15 cards you want to bring to the arena.</p></div>
@@ -235,7 +247,8 @@ function renderDeck(focus) {
           <button type="button" data-action="add" data-id="${id}" aria-label="Add ${name}" ${library.deck.length >= LIMITS.deck || (counts.get(card.id) ?? 0) >= LIMITS.copies ? "disabled" : ""}>＋ Add</button>
           ${STARTER_CARDS.includes(card) ? "" : `<button type="button" data-action="edit" data-id="${id}" aria-label="Edit ${name}">Edit</button>`}</div></div>`;
       }).join("")}</div></section>
-      <aside class="panel deck-panel"><div class="section-head"><h2>Active deck</h2><strong>${library.deck.length} / ${LIMITS.deck}</strong></div>
+      <aside class="panel deck-panel"><details class="deck-details" ${deckOpen ? "open" : ""}>
+        <summary class="deck-summary"><span>Active deck</span><strong>${library.deck.length} / ${LIMITS.deck}</strong></summary>
         <p>${escapeHTML(issue || "Ready to duel.")}</p>
         ${storageWarning ? `<p class="field-help">${escapeHTML(storageWarning)}</p>` : ""}
         <p role="status" class="field-help">${escapeHTML(deckMessage)}</p>
@@ -246,7 +259,7 @@ function renderDeck(focus) {
             <button type="button" data-action="remove" data-id="${escapeHTML(id)}" aria-label="Remove one ${name}">−</button></li>`;
         }).join("")}</ul>
         <button type="button" data-action="starter">Use starter deck</button>
-      </aside></div>`;
+      </details></aside></div>`;
   if (focus) {
     const candidate = [...main.querySelectorAll("[data-action]")].find((button) =>
       button.dataset.action === focus.action && button.dataset.id === focus.id && !button.disabled);
@@ -288,6 +301,7 @@ function replaceFile(next) {
   artLoading = false;
   file = next;
   formMessage = "";
+  draftMessage = "";
 }
 
 function mountStudio() {
@@ -295,6 +309,15 @@ function mountStudio() {
   form.elements.faction.append(new Option("Choose faction", ""));
   for (const [id, faction] of Object.entries(FACTIONS)) form.elements.faction.append(new Option(faction.name, id));
   for (const [id, ability] of Object.entries(ABILITIES)) form.elements.ability.append(new Option(ability.name, id));
+  for (const field of CARD_FIELDS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "field-lock";
+    button.dataset.action = "toggle-lock";
+    button.dataset.field = field;
+    button.setAttribute("aria-label", `Lock ${FIELD_LABELS[field].toLowerCase()} for auto-fill`);
+    form.elements[field].before(button);
+  }
   syncStudioFields();
 }
 
@@ -322,11 +345,21 @@ function updateStudio() {
   save.disabled = saving || artLoading;
   save.textContent = saving ? "Saving…" : file.id ? "Save changes" : "Save to collection";
   const ai = document.querySelector("#ai-fill");
-  ai.disabled = drafting || artLoading || !aiAvailable;
+  const allLocked = file.locks.length === CARD_FIELDS.length;
+  ai.disabled = drafting || artLoading || allLocked || !aiAvailable;
   ai.textContent = drafting ? "Drafting…" : "✦ AI auto-fill";
-  document.querySelector("#ai-status").textContent = aiAvailable
+  const quick = document.querySelector("#quick-fill");
+  quick.disabled = allLocked;
+  quick.classList.toggle("primary", aiAvailable === false);
+  document.querySelector("#ai-status").textContent = allLocked ? "All fields are locked. Unlock one to draft it." : aiAvailable
     ? "AI drafts editable fields. Quick fill uses built-in templates."
-    : "Quick fill uses built-in templates. AI auto-fill requires a server configured with an OpenAI API key.";
+    : "Quick fill uses built-in templates. AI auto-fill is available on a server with an OpenAI API key.";
+  for (const button of form.querySelectorAll(".field-lock")) {
+    const locked = file.locks.includes(button.dataset.field);
+    button.setAttribute("aria-pressed", String(locked));
+    button.textContent = locked ? "Locked" : "Lock";
+  }
+  document.querySelector("#draft-status").textContent = draftMessage;
   const ability = abilityOf(file);
   document.querySelector("#ability-help").textContent = ability.text;
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
@@ -372,25 +405,51 @@ async function readArtwork(artwork) {
   }
 }
 
-function applyDraft(draft) {
-  const issues = cardIssues(draft);
-  if (issues.length) throw new Error(issues[0]);
+function applyDraft(draft, locked) {
+  const result = fitDraft(draft, locked);
   revision++;
-  for (const key of CARD_FIELDS) file[key] = draft[key];
+  for (const key of CARD_FIELDS) {
+    if (!Object.hasOwn(locked, key)) file[key] = result[key];
+  }
   syncStudioFields();
+}
+
+function draftBrief() {
+  const locked = lockedFields();
+  const issue = lockedCardIssue(locked);
+  if (issue) throw new Error(issue);
+  return { name: file.name.trim(), faction: file.faction, concept: file.concept.trim(), locked };
+}
+
+function quickFill() {
+  try {
+    const brief = draftBrief();
+    applyDraft(templateDraft(brief), brief.locked);
+    draftMessage = "Quick fill applied. Review the draft before saving.";
+  } catch (error) {
+    draftMessage = error.message;
+  }
+  updateStudio();
 }
 
 async function autoFill() {
   if (drafting || !aiAvailable) return;
-  const brief = { name: file.name.trim(), faction: file.faction, concept: file.concept.trim(), art: file.shareArt ? file.art : "" };
-  if (!brief.name && !brief.faction && !brief.concept && !brief.art) {
-    formMessage = "Add a name, faction, or concept, or choose to include artwork.";
+  let brief;
+  try {
+    brief = { ...draftBrief(), art: file.shareArt ? file.art : "" };
+  } catch (error) {
+    draftMessage = error.message;
+    updateStudio();
+    return;
+  }
+  if (!brief.name && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
+    draftMessage = "Add a name, faction, or concept, lock a value, or choose to include artwork.";
     updateStudio();
     return;
   }
   const requestRevision = revision;
   drafting = true;
-  formMessage = "";
+  draftMessage = "";
   updateStudio();
   try {
     const response = await fetch("/api/draft", {
@@ -401,10 +460,10 @@ async function autoFill() {
     const data = await response.json();
     if (revision !== requestRevision) return;
     if (!response.ok) throw new Error(data.error ?? "AI auto-fill is unavailable.");
-    formMessage = "AI draft applied. Review the fields before saving.";
-    applyDraft(data.draft);
+    applyDraft(data.draft, brief.locked);
+    draftMessage = "AI draft applied. Review the fields before saving.";
   } catch (error) {
-    if (revision === requestRevision) formMessage = error.message || "AI auto-fill is unavailable.";
+    if (revision === requestRevision) draftMessage = error.message || "AI auto-fill is unavailable.";
   } finally {
     drafting = false;
     updateStudio();
@@ -452,6 +511,18 @@ main.addEventListener("click", (event) => {
   if (tab === "arena") return handleArena(button);
   if (tab === "deck") return void handleDeck(button);
   switch (button.dataset.action) {
+    case "toggle-lock": {
+      const { field } = button.dataset;
+      file.locks = file.locks.includes(field) ? file.locks.filter((key) => key !== field) : [...file.locks, field];
+      revision++;
+      draftMessage = "";
+      updateStudio();
+      break;
+    }
+    case "preview-card":
+      document.querySelector("#dialog-preview").innerHTML = cardMarkup(file);
+      document.querySelector("#card-preview-dialog").showModal();
+      break;
     case "reset-form":
       replaceFile(blankCard());
       syncStudioFields();
@@ -463,8 +534,7 @@ main.addEventListener("click", (event) => {
       updateStudio();
       break;
     case "quick-fill":
-      formMessage = "Template applied. Review the fields before saving.";
-      applyDraft(templateDraft({ ...file, name: file.name.trim() }));
+      quickFill();
       break;
     case "ai-fill":
       void autoFill();
@@ -478,6 +548,7 @@ main.addEventListener("input", (event) => {
   if (name === "artwork") return;
   revision++;
   formMessage = "";
+  draftMessage = "";
   file[name] = type === "checkbox" ? checked : type === "number" ? valueAsNumber : value;
   updateStudio();
 });

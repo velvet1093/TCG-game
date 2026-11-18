@@ -55,3 +55,26 @@ test("a provider error returns a usable studio error", async (t) => {
   assert.equal(response.status, 502);
   assert.match((await response.json()).error, /Quick fill/);
 });
+
+test("AI receives the locks as context and fits its result around them", async (t) => {
+  const requests = [];
+  const url = await boot(t, {
+    apiKey: "test",
+    request: async (_, { body }) => {
+      requests.push(JSON.parse(body));
+      const draft = { name: "Provider Name", faction: "tide", cost: 1, attack: 1, health: 2, ability: "haste", flavor: "Sea breeze." };
+      return Response.json({ status: "completed", output: [{ content: [{ type: "output_text", text: JSON.stringify(draft) }] }] });
+    },
+  });
+  const locked = { name: "Wind Herald", attack: 5, health: 4 };
+  const reply = await post(url, { name: locked.name, locked });
+  assert.equal(reply.status, 200);
+  const { draft } = await reply.json();
+  assert.deepEqual(Object.fromEntries(Object.keys(locked).map((key) => [key, draft[key]])), locked);
+  assert.equal(draft.cost, 5);
+  assert.deepEqual(JSON.parse(requests[0].input[0].content[0].text).locked, locked);
+  assert.equal((await post(url, { concept: "Guardian", locked: { cost: 1, attack: 4 } })).status, 400);
+  assert.equal(requests.length, 1);
+  const unlocked = await post(url, { name: locked.name, locked: {} });
+  assert.equal((await unlocked.json()).draft.name, "Provider Name");
+});

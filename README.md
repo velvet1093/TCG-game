@@ -23,8 +23,9 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 ## Create a card
 
 1. Open **Card studio**. Add a faction, a name, a concept, or your artwork.
-2. Enter the fields yourself, use **Quick fill** for a template, or use **AI auto-fill** with the configuration below. Review the draft and save it.
-3. In **Deck**, remove a card to free a slot, add your new unit, and start a **New duel**.
+2. Tap **Lock** next to any field you want to keep. Quick fill and AI auto-fill use locked values as context and draft around them. Tap **Locked** to unlock a field. If locked stats exceed the Pulse budget, adjust or unlock one of them.
+3. Enter the fields yourself, use **Quick fill** for a template, or use **AI auto-fill** with the configuration below. Review the draft and save it. On a phone, tap **Preview** in the editor to see the card.
+4. In **Deck**, open **Active deck** and remove a card to free a slot. Add your new unit from the collection and start a **New duel**.
 
 The collection, compressed artwork, and deck are saved in the current browser. Edits to a card apply the next time you start a duel. Clearing site data or switching browser profiles affects access to those saved cards.
 
@@ -38,7 +39,7 @@ node --env-file=.env server.js
 
 The server uses the OpenAI Responses API with structured outputs. The default model is `gpt-4.1-mini`. Set `OPENAI_MODEL` to override it with a compatible vision and structured-output model. Keep the key server-side. The server binds to loopback by default and is intended for local use. Add authentication and request quotas before exposing a keyed server publicly.
 
-Auto-fill sends the name, faction and brief you enter. It includes artwork only when you check the artwork option. It never changes your image. You can review and edit the draft before adding it to your collection. Quick fill runs in the browser and is available without a key.
+AI auto-fill sends the name, faction, brief, and locked values you enter. It includes artwork only when you check the artwork option. You can review and edit the draft before adding it to your collection. Quick fill runs in the browser and is available without a key.
 
 ## Verification
 

@@ -32,28 +32,33 @@
     <section class="page-head"><div><h1>Card studio</h1><p>Upload your art, shape your unit, and add it to your collection.</p></div></section>
     <div class="studio-layout">
       <form id="card-form" class="panel studio-form">
-        <div class="studio-heading"><h2 id="mode">Create a card</h2><button type="button" id="reset-form" data-action="reset-form" hidden>New card</button></div>
-        <div class="studio-grid">
-          <label>Card name<input name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></label>
-          <label>Faction<select name="faction"></select></label>
+        <div class="studio-heading"><h2 id="mode">Create a card</h2><div class="head-actions">
+          <button type="button" class="preview-trigger" data-action="preview-card">Preview</button>
+          <button type="button" id="reset-form" data-action="reset-form" hidden>New card</button>
+        </div></div>
+        <div class="studio-grid identity-fields">
+          <div class="card-field"><label for="card-name">Card name</label><input id="card-name" name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></div>
+          <div class="card-field"><label for="card-faction">Faction</label><select id="card-faction" name="faction"></select></div>
           <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
             <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
           <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>
         </div>
         <section class="draft-box" aria-labelledby="draft-title">
           <h3 id="draft-title">Auto-fill</h3>
+          <p class="field-help">Tap Lock beside a field to keep its value and use it as context for the draft.</p>
           <label>Concept <span class="optional">(optional)</span><textarea name="concept" maxlength="600" rows="2" placeholder="A forest guardian who shields the lane"></textarea></label>
           <label class="check"><input type="checkbox" name="shareArt"> Include artwork in the OpenAI request</label>
-          <div class="head-actions"><button type="button" class="primary" id="ai-fill" data-action="ai-fill">✦ AI auto-fill</button><button type="button" data-action="quick-fill">Quick fill</button></div>
+          <div class="head-actions"><button type="button" class="primary" id="ai-fill" data-action="ai-fill">✦ AI auto-fill</button><button type="button" id="quick-fill" data-action="quick-fill">Quick fill</button></div>
           <p class="field-help" id="ai-status"></p>
+          <p id="draft-status" role="status"></p>
         </section>
-        <div class="studio-grid">
-          <label>Pulse cost<input type="number" name="cost" min="1" max="6" required></label>
-          <label>Attack<input type="number" name="attack" min="1" max="7" required></label>
-          <label>Health<input type="number" name="health" min="1" max="9" required></label>
-          <label class="wide">Ability<select name="ability"></select></label>
+        <div class="studio-grid stat-fields">
+          <div class="card-field"><label for="card-cost">Pulse cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
+          <div class="card-field"><label for="card-attack">Attack</label><input id="card-attack" type="number" name="attack" min="1" max="7" required></div>
+          <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="1" max="9" required></div>
+          <div class="card-field wide"><label for="card-ability">Ability</label><select id="card-ability" name="ability"></select></div>
           <p class="field-help wide" id="ability-help"></p>
-          <label class="wide">Flavor text<textarea name="flavor" maxlength="140" rows="2" placeholder="A line of lore or dialogue"></textarea></label>
+          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A line of lore or dialogue"></textarea></div>
         </div>
         <p id="budget" class="budget"></p>
         <p id="form-status" role="status" aria-live="polite"></p>
@@ -65,6 +70,10 @@
         <p class="field-help">Custom cards and artwork are saved in this browser.</p>
       </aside>
     </div>
+    <dialog id="card-preview-dialog" aria-labelledby="preview-title">
+      <form method="dialog" class="studio-heading"><h2 id="preview-title">Card preview</h2><button aria-label="Close card preview">Close</button></form>
+      <div id="dialog-preview"></div>
+    </dialog>
   </template>
   <dialog id="rules">
     <form method="dialog">
