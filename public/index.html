@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#110e17">
+  <meta name="description" content="Build your deck, create your own cards, and play an original three-lane card duel.">
+  <title>Lanternwake Arena</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#arena"><span class="brand-mark" aria-hidden="true">✦</span><span>Lanternwake <b>Arena</b></span></a>
+      <nav aria-label="Game sections">
+        <a href="#arena" data-tab="arena">Arena</a>
+        <a href="#deck" data-tab="deck">Deck</a>
+        <a href="#studio" data-tab="studio">Card studio</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell" id="main"></main>
+  <template id="arena-template">
+    <section class="page-head">
+      <div><h1>Duel arena</h1><p>Break the rival Core across three lanes.</p></div>
+      <div class="head-actions"><button type="button" data-action="rules">How to play</button><button type="button" class="primary" data-action="duel">New duel</button></div>
+    </section>
+    <div id="arena-game"></div>
+  </template>
+  <template id="studio-template">
+    <section class="page-head"><div><h1>Card studio</h1><p>Upload your art, shape your unit, and add it to your collection.</p></div></section>
+    <div class="studio-layout">
+      <form id="card-form" class="panel studio-form">
+        <div class="studio-heading"><h2 id="mode">Create a card</h2><button type="button" id="reset-form" data-action="reset-form" hidden>New card</button></div>
+        <div class="studio-grid">
+          <label>Card name<input name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></label>
+          <label>Faction<select name="faction"></select></label>
+          <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
+            <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
+          <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>
+        </div>
+        <section class="draft-box" aria-labelledby="draft-title">
+          <h3 id="draft-title">Auto-fill</h3>
+          <label>Concept <span class="optional">(optional)</span><textarea name="concept" maxlength="600" rows="2" placeholder="A forest guardian who shields the lane"></textarea></label>
+          <label class="check"><input type="checkbox" name="shareArt"> Include artwork in the OpenAI request</label>
+          <div class="head-actions"><button type="button" class="primary" id="ai-fill" data-action="ai-fill">✦ AI auto-fill</button><button type="button" data-action="quick-fill">Quick fill</button></div>
+          <p class="field-help" id="ai-status"></p>
+        </section>
+        <div class="studio-grid">
+          <label>Pulse cost<input type="number" name="cost" min="1" max="6" required></label>
+          <label>Attack<input type="number" name="attack" min="1" max="7" required></label>
+          <label>Health<input type="number" name="health" min="1" max="9" required></label>
+          <label class="wide">Ability<select name="ability"></select></label>
+          <p class="field-help wide" id="ability-help"></p>
+          <label class="wide">Flavor text<textarea name="flavor" maxlength="140" rows="2" placeholder="A line of lore or dialogue"></textarea></label>
+        </div>
+        <p id="budget" class="budget"></p>
+        <p id="form-status" role="status" aria-live="polite"></p>
+        <button type="submit" class="primary" id="save-card">Save to collection</button>
+      </form>
+      <aside aria-label="Card preview" class="preview-panel">
+        <h2>Card preview</h2>
+        <div id="preview"></div>
+        <p class="field-help">Custom cards and artwork are saved in this browser.</p>
+      </aside>
+    </div>
+  </template>
+  <dialog id="rules">
+    <form method="dialog">
+      <div class="studio-heading"><h2>How to play</h2><button aria-label="Close rules" value="close">Close</button></div>
+      <ol>
+        <li>Each Core starts at 20 health. Bring 15 cards and up to 3 copies of each card.</li>
+        <li>Start with 4 cards and 2 Pulse. Your opening hand includes an affordable card if your deck has one. At the start of each turn, draw a card and refill Pulse. The first player skips the opening draw. Capacity grows by 1 each round, up to 6.</li>
+        <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
+        <li>Each ready unit can strike straight across its lane or shift into an adjacent empty lane. Units trade damage on a strike. An open lane exposes the opposing Core.</li>
+        <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 1 Core health when you would draw at the start of your turn.</li>
+        <li>Reduce the rival Core to zero to win.</li>
+      </ol>
+    </form>
+  </dialog>
+</body>
+</html>
