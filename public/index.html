@@ -47,7 +47,28 @@
           <h3 id="draft-title">Auto-fill</h3>
           <p class="field-help">Tap Lock beside a field to keep its value and use it as context for the draft.</p>
           <label>Concept <span class="optional">(optional)</span><textarea name="concept" maxlength="600" rows="2" placeholder="A forest guardian who shields the lane"></textarea></label>
-          <label class="check"><input type="checkbox" name="shareArt"> Include artwork in the OpenAI request</label>
+          <label>AI provider
+            <select name="draftProvider">
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai">OpenAI (local server)</option>
+            </select>
+          </label>
+          <div id="openrouter-settings">
+            <div class="router-field">
+              <label for="openrouter-key">OpenRouter API key</label>
+              <input type="password" id="openrouter-key" placeholder="Paste your OpenRouter key" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="256" aria-describedby="openrouter-key-help">
+              <p class="field-help" id="openrouter-key-help">The game keeps this key in memory until you reload and sends it directly to OpenRouter.</p>
+            </div>
+            <details class="model-settings">
+              <summary>Model settings</summary>
+              <div class="router-field">
+                <label for="openrouter-model">OpenRouter model ID</label>
+                <input name="openRouterModel" id="openrouter-model" aria-describedby="openrouter-model-help" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="160">
+                <p class="field-help" id="openrouter-model-help">Choose a model with structured outputs. Artwork also requires image input support.</p>
+              </div>
+            </details>
+          </div>
+          <label class="check"><input type="checkbox" name="shareArt"> <span id="draft-art-label">Include artwork in the OpenRouter request</span></label>
           <div class="head-actions"><button type="button" class="primary" id="ai-fill" data-action="ai-fill">✦ AI auto-fill</button><button type="button" id="quick-fill" data-action="quick-fill">Quick fill</button></div>
           <p class="field-help" id="ai-status"></p>
           <p id="draft-status" role="status"></p>

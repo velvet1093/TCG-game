@@ -29,7 +29,13 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 
 The collection, compressed artwork, and deck are saved in the current browser. Edits to a card apply the next time you start a duel. Clearing site data or switching browser profiles affects access to those saved cards.
 
-## Optional AI auto-fill
+## AI auto-fill with OpenRouter
+
+In **Card studio → Auto-fill**, choose **OpenRouter**, paste your OpenRouter API key, and click **AI auto-fill**. This works on the hosted game and in a local browser. The game keeps the key in memory until you reload and sends it directly to OpenRouter. Drafts use your OpenRouter account and may use credits.
+
+The default model is `openai/gpt-4.1-mini`. To use a different model, open **Model settings** and enter its OpenRouter model ID. Choose a model with structured outputs support. If you include artwork, choose a model that also accepts images. Artwork sharing is opt-in.
+
+## AI auto-fill with the local OpenAI server
 
 Create a local `.env` file containing `OPENAI_API_KEY=your_key`. Start with:
 
@@ -39,7 +45,7 @@ node --env-file=.env server.js
 
 The server uses the OpenAI Responses API with structured outputs. The default model is `gpt-4.1-mini`. Set `OPENAI_MODEL` to override it with a compatible vision and structured-output model. Keep the key server-side. The server binds to loopback by default and is intended for local use. Add authentication and request quotas before exposing a keyed server publicly.
 
-AI auto-fill sends the name, faction, brief, and locked values you enter. It includes artwork only when you check the artwork option. You can review and edit the draft before adding it to your collection. Quick fill runs in the browser and is available without a key.
+Both providers receive the name, faction, brief, and locked values you enter. They receive artwork only when you check the artwork option. You can review and edit the draft before adding it to your collection. Quick fill runs in the browser and is available without a key.
 
 ## Verification
 

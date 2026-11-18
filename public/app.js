@@ -1,6 +1,7 @@
 import { ABILITIES, CARD_FIELDS, FIELD_LABELS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
   cardIssues, deckIssue, fitDraft, lockedCardIssue, statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
+import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 
 const main = document.querySelector("#main");
 const section = (id) => document.querySelector(`#${id}-template`).content.cloneNode(true);
@@ -24,6 +25,9 @@ let artLoading = false;
 let saving = false;
 let drafting = false;
 let aiAvailable;
+let draftProvider;
+let openRouterKey = "";
+let openRouterModel = OPENROUTER_DEFAULT_MODEL;
 let game;
 let selection;
 let arenaMessage = "";
@@ -34,6 +38,7 @@ const factionOf = (card) => Object.hasOwn(FACTIONS, card.faction) ? FACTIONS[car
 const abilityOf = (card) => Object.hasOwn(ABILITIES, card.ability) ? ABILITIES[card.ability] : ABILITIES.basic;
 const mobile = matchMedia("(max-width: 610px)");
 const lockedFields = () => Object.fromEntries(CARD_FIELDS.filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
+const selectedProvider = () => draftProvider ?? (aiAvailable ? "openai" : "openrouter");
 
 function openStorage() {
   return new Promise((resolve, reject) => {
@@ -306,6 +311,9 @@ function replaceFile(next) {
 
 function mountStudio() {
   const form = document.querySelector("#card-form");
+  form.elements["openrouter-key"].value = openRouterKey;
+  form.elements.openRouterModel.value = openRouterModel;
+  form.elements.openRouterModel.placeholder = OPENROUTER_DEFAULT_MODEL;
   form.elements.faction.append(new Option("Choose faction", ""));
   for (const [id, faction] of Object.entries(FACTIONS)) form.elements.faction.append(new Option(faction.name, id));
   for (const [id, ability] of Object.entries(ABILITIES)) form.elements.ability.append(new Option(ability.name, id));
@@ -344,22 +352,12 @@ function updateStudio() {
   const save = document.querySelector("#save-card");
   save.disabled = saving || artLoading;
   save.textContent = saving ? "Saving…" : file.id ? "Save changes" : "Save to collection";
-  const ai = document.querySelector("#ai-fill");
-  const allLocked = file.locks.length === CARD_FIELDS.length;
-  ai.disabled = drafting || artLoading || allLocked || !aiAvailable;
-  ai.textContent = drafting ? "Drafting…" : "✦ AI auto-fill";
-  const quick = document.querySelector("#quick-fill");
-  quick.disabled = allLocked;
-  quick.classList.toggle("primary", aiAvailable === false);
-  document.querySelector("#ai-status").textContent = allLocked ? "All fields are locked. Unlock one to draft it." : aiAvailable
-    ? "AI drafts editable fields. Quick fill uses built-in templates."
-    : "Quick fill uses built-in templates. AI auto-fill is available on a server with an OpenAI API key.";
+  updateDraftControls(form);
   for (const button of form.querySelectorAll(".field-lock")) {
     const locked = file.locks.includes(button.dataset.field);
     button.setAttribute("aria-pressed", String(locked));
     button.textContent = locked ? "Locked" : "Lock";
   }
-  document.querySelector("#draft-status").textContent = draftMessage;
   const ability = abilityOf(file);
   document.querySelector("#ability-help").textContent = ability.text;
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
@@ -368,6 +366,27 @@ function updateStudio() {
   budget.textContent = `Stat budget ${spent} / ${available}`;
   budget.classList.toggle("over-budget", spent > available);
   document.querySelector("#form-status").textContent = formMessage || storageWarning;
+}
+
+function updateDraftControls(form) {
+  const provider = selectedProvider();
+  const router = provider === "openrouter";
+  const ready = router ? Boolean(openRouterKey.trim()) : Boolean(aiAvailable);
+  form.elements.draftProvider.querySelector('[value="openai"]').disabled = !aiAvailable;
+  form.elements.draftProvider.value = provider;
+  document.querySelector("#openrouter-settings").hidden = !router;
+  document.querySelector("#draft-art-label").textContent = `Include artwork in the ${router ? "OpenRouter" : "OpenAI"} request`;
+  const allLocked = file.locks.length === CARD_FIELDS.length;
+  const ai = document.querySelector("#ai-fill");
+  ai.disabled = drafting || artLoading || allLocked || !ready;
+  ai.textContent = drafting ? "Drafting…" : "✦ AI auto-fill";
+  const quick = document.querySelector("#quick-fill");
+  quick.disabled = allLocked;
+  ai.classList.toggle("primary", ready);
+  quick.classList.toggle("primary", !ready);
+  document.querySelector("#ai-status").textContent = allLocked ? "All fields are locked. Unlock one to draft it."
+    : "Quick fill uses built-in templates and works without an API key.";
+  document.querySelector("#draft-status").textContent = draftMessage;
 }
 
 async function readArtwork(artwork) {
@@ -433,7 +452,8 @@ function quickFill() {
 }
 
 async function autoFill() {
-  if (drafting || !aiAvailable) return;
+  const useRouter = selectedProvider() === "openrouter";
+  if (drafting || !(useRouter ? openRouterKey.trim() : aiAvailable)) return;
   let brief;
   try {
     brief = { ...draftBrief(), art: file.shareArt ? file.art : "" };
@@ -452,15 +472,21 @@ async function autoFill() {
   draftMessage = "";
   updateStudio();
   try {
-    const response = await fetch("/api/draft", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(brief),
-    });
-    const data = await response.json();
+    let draft;
+    if (useRouter) {
+      draft = await requestOpenRouterDraft(brief, { apiKey: openRouterKey, model: openRouterModel });
+    } else {
+      const response = await fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(brief),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "AI auto-fill is unavailable.");
+      draft = data.draft;
+    }
     if (revision !== requestRevision) return;
-    if (!response.ok) throw new Error(data.error ?? "AI auto-fill is unavailable.");
-    applyDraft(data.draft, brief.locked);
+    applyDraft(draft, brief.locked);
     draftMessage = "AI draft applied. Review the fields before saving.";
   } catch (error) {
     if (revision === requestRevision) draftMessage = error.message || "AI auto-fill is unavailable.";
@@ -544,11 +570,24 @@ main.addEventListener("click", (event) => {
 
 main.addEventListener("input", (event) => {
   if (!event.target.form?.matches("#card-form")) return;
-  const { name, value, type, checked, valueAsNumber } = event.target;
+  const { id, name, value, type, checked, valueAsNumber } = event.target;
   if (name === "artwork") return;
   revision++;
   formMessage = "";
   draftMessage = "";
+  if (id === "openrouter-key" || name === "openRouterModel") {
+    draftProvider = "openrouter";
+    if (id === "openrouter-key") openRouterKey = value;
+    else openRouterModel = value;
+    updateDraftControls(event.target.form);
+    return;
+  }
+  if (name === "draftProvider") {
+    draftProvider = value;
+    file.shareArt = false;
+    updateStudio();
+    return;
+  }
   file[name] = type === "checkbox" ? checked : type === "number" ? valueAsNumber : value;
   updateStudio();
 });

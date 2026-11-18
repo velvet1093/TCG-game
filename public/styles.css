@@ -184,6 +184,10 @@ input[type=file] { font-size: .8rem; }
 .check input { accent-color: var(--accent); }
 .optional { color: var(--muted); font-weight: 400; display: contents; }
 .draft-box { display: grid; gap: .55rem; padding: .75rem; border: 1px solid #714d68; border-radius: .6rem; background: #2a2031; }
+#openrouter-settings { display: grid; gap: .38rem; }
+.router-field { display: grid; gap: .25rem; }
+.model-settings summary { padding-block: .32rem; color: var(--muted); font-size: .85rem; }
+.model-settings[open] summary { margin-bottom: .25rem; }
 .text-button { justify-self: start; min-height: 2rem; font-size: .83rem; }
 .budget { font-size: .86rem; color: #9fe0b3; font-weight: 800; }
 .over-budget { color: var(--soft-accent); }
@@ -267,6 +271,7 @@ dialog li { margin-bottom: .35rem; color: var(--muted); }
   .studio-form :is(input:not([type=checkbox]), select, textarea) { font-size: 1rem; min-height: 44px; }
   .field-lock { min-height: 44px; min-width: 48px; }
   .studio-form .head-actions button, #save-card { min-height: 44px; }
+  .model-settings summary { display: list-item; min-height: 44px; align-content: center; }
   .preview-trigger { display: inline-flex; }
   .preview-panel { display: none; }
 }
