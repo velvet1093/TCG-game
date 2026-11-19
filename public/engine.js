@@ -1,5 +1,5 @@
-import { EVOLUTION_TURNS, ITEM_EFFECTS, LIMITS, deckIssue, evolvesFrom, isItem, unitStage } from "./cards.js";
-import { activeAttacks, attackPulse } from "./attacks.js";
+import { ABILITIES, EVOLUTION_TURNS, ITEM_EFFECTS, LIMITS, STAT_STEP, deckIssue, evolvesFrom, isItem, unitStage } from "./cards.js";
+import { ATTACK_EFFECTS, activeAttacks, attackPulse, laneAttackDamage } from "./attacks.js";
 
 const labels = ["You", "Rival"];
 const logLimit = 35;
@@ -61,8 +61,8 @@ function beginTurn(game, { opening = false } = {}) {
     }
   }
   if (!opening && !side.deck.length) {
-    side.core = Math.max(0, side.core - 1);
-    log(game, `${labels[game.turn]} take 1 fatigue damage from an empty deck.`);
+    side.core = Math.max(0, side.core - LIMITS.fatigue);
+    log(game, `${labels[game.turn]} take ${LIMITS.fatigue} fatigue damage from an empty deck.`);
     checkWinner(game);
   } else if (!opening) {
     draw(side);
@@ -77,7 +77,7 @@ function chosenAttack(unit, action) {
 }
 
 const hitsLane = (effects) => effects.includes("hit") || effects.includes("heavy");
-const attackPower = (unit, effects) => unit.card.attack + (effects.includes("heavy") ? 2 : 0);
+const ward = (unit) => unit?.card.ability === "guard" ? ABILITIES.guard.amount : 0;
 
 function readyAttackIssue(game, sideIndex, action) {
   const { lane } = action;
@@ -182,10 +182,10 @@ function playAttack(game, sideIndex, action) {
   side.pulse -= attackPulse(move);
   let damage = 0;
   if (hitsLane(effects)) {
-    damage = attackPower(unit, effects) - Number(target?.card.ability === "guard");
+    damage = Math.max(0, laneAttackDamage(unit.card.attack, effects) - ward(target));
     game.impact = { side: 1 - sideIndex, lane, amount: damage, core: !target };
     if (target) {
-      const counter = target.card.attack - Number(unit.card.ability === "guard");
+      const counter = Math.max(0, target.card.attack - ward(unit));
       target.health -= damage;
       unit.health -= counter;
       log(game, `${unit.card.name} uses ${name} on ${target.card.name} for ${damage} (${counter} returned).`);
@@ -207,18 +207,18 @@ function playAttack(game, sideIndex, action) {
     for (const adjacent of [lane - 1, lane + 1]) {
       const neighbor = rival.board[adjacent];
       if (!neighbor) continue;
-      neighbor.health--;
-      log(game, `${name} deals 1 damage to ${neighbor.card.name}.`);
+      neighbor.health -= ATTACK_EFFECTS.splash.amount;
+      log(game, `${name} deals ${ATTACK_EFFECTS.splash.amount} damage to ${neighbor.card.name}.`);
       clearLane(game, rival, adjacent);
     }
   }
   if (effects.includes("drain") && damage > 0) {
-    const restored = Math.min(2, LIMITS.core - side.core);
+    const restored = Math.min(ATTACK_EFFECTS.drain.amount, LIMITS.core - side.core);
     side.core += restored;
     if (restored) log(game, `${name} restores ${restored} Core health.`);
   }
   if (effects.includes("mend") && side.board[lane] && unit.health < unit.card.health) {
-    const restored = Math.min(3, unit.card.health - unit.health);
+    const restored = Math.min(ATTACK_EFFECTS.mend.amount, unit.card.health - unit.health);
     unit.health += restored;
     log(game, `${name} restores ${restored} HP to ${unit.card.name}.`);
   }
@@ -297,9 +297,9 @@ export function act(game, sideIndex, action) {
       side.board[lane] = { card, health: card.health, ready: card.ability === "haste", turnsAtStage: 0 };
       log(game, `${labels[sideIndex]} deploy ${card.name} to lane ${lane + 1}.`);
       if (card.ability === "draw") draw(side);
-      if (card.ability === "heal") side.core = Math.min(LIMITS.core, side.core + 2);
+      if (card.ability === "heal") side.core = Math.min(LIMITS.core, side.core + ABILITIES.heal.amount);
       if (card.ability === "ping" && opponent.board[lane]) {
-        opponent.board[lane].health--;
+        opponent.board[lane].health -= ABILITIES.ping.amount;
         clearLane(game, opponent, lane);
       }
       break;
@@ -312,7 +312,7 @@ export function act(game, sideIndex, action) {
       log(game, `${unit.card.name} evolves into ${card.name} in lane ${lane + 1}.`);
       side.discard.push(unit.card);
       unit.card = card;
-      unit.health = Math.max(1, card.health - damage);
+      unit.health = Math.max(STAT_STEP, card.health - damage);
       unit.turnsAtStage = 0;
       break;
     }
@@ -343,22 +343,22 @@ function rankBotActions(game) {
         const { slot, effects } = move;
         const action = { type: "skill", lane, skill: slot };
         if (actionIssue(game, 1, action)) continue;
-        const power = hitsLane(effects) ? attackPower(unit, effects) : 0;
-        const damage = power - Number(target?.card.ability === "guard");
+        const power = laneAttackDamage(unit.card.attack, effects);
+        const damage = Math.max(0, power - ward(target));
         let score = 0;
-        if (power && !target) score = opponent.core <= power ? 100 : 8 + power;
+        if (power && !target) score = opponent.core <= power ? 100 : 8 + power / STAT_STEP;
         if (power && target) {
           const kills = damage >= target.health;
-          const survives = target.card.attack - Number(unit.card.ability === "guard") < unit.health;
-          score = (kills ? 9 + target.card.cost : 1 + damage) - (survives ? 0 : 5 + unit.card.cost / 2);
+          const survives = target.card.attack - ward(unit) < unit.health;
+          score = (kills ? 9 + target.card.cost : 1 + damage / STAT_STEP) - (survives ? 0 : 5 + unit.card.cost / 2);
         }
-        if (effects.includes("mend")) score += Math.min(3, unit.card.health - unit.health);
-        if (effects.includes("drain") && damage > 0) score += Math.min(2, LIMITS.core - side.core);
-        if (effects.includes("stun") && target?.health > damage && !target.stunned) score += 2 + target.card.attack / 2;
+        if (effects.includes("mend")) score += Math.min(ATTACK_EFFECTS.mend.amount, unit.card.health - unit.health) / STAT_STEP;
+        if (effects.includes("drain") && damage > 0) score += Math.min(ATTACK_EFFECTS.drain.amount, LIMITS.core - side.core) / STAT_STEP;
+        if (effects.includes("stun") && target?.health > damage && !target.stunned) score += 2 + target.card.attack / (2 * STAT_STEP);
         if (effects.includes("draw") && side.deck.length) score += 3;
         if (effects.includes("splash")) {
           score += [opponent.board[lane - 1], opponent.board[lane + 1]]
-            .reduce((total, neighbor) => total + (neighbor?.health === 1 ? 4 : neighbor ? 1.5 : 0), 0);
+            .reduce((total, neighbor) => total + (neighbor?.health <= ATTACK_EFFECTS.splash.amount ? 4 : neighbor ? 1.5 : 0), 0);
         }
         options.push({ score: score - attackPulse(move) * 0.8, action });
       }
@@ -375,8 +375,8 @@ function rankBotActions(game) {
       } else if (unitStage(card) === 1) {
         let score = 4 + card.cost + (target ? 0.5 : 0);
         if (card.ability === "haste" && !target) score += 3;
-        if (card.ability === "ping" && target?.health === 1) score += 6;
-        if (card.ability === "heal" && side.core <= 18) score += 2;
+        if (card.ability === "ping" && target?.health <= ABILITIES.ping.amount) score += 6;
+        if (card.ability === "heal" && side.core <= LIMITS.core - ABILITIES.heal.amount) score += 2;
         options.push({ score, action: { type: "deploy", lane, hand } });
       }
     });
@@ -392,9 +392,9 @@ function rankBotActions(game) {
       const enemy = opponent.board[lane];
       const scores = {
         draw: side.hand.length <= 3 ? 5.5 : 2.8,
-        "heal-ally": ally ? 1.5 + Math.min(effect.amount, ally.card.health - ally.health) : 0,
+        "heal-ally": ally ? 1.5 + Math.min(effect.amount, ally.card.health - ally.health) / STAT_STEP : 0,
         "damage-enemy": enemy ? enemy.health <= effect.amount ? 8 + enemy.card.cost : 3 : 0,
-        "heal-core": side.core <= 10 ? 8 : 2 + Math.min(effect.amount, LIMITS.core - side.core),
+        "heal-core": side.core <= LIMITS.core / 2 ? 8 : 2 + Math.min(effect.amount, LIMITS.core - side.core) / STAT_STEP,
         "damage-core": opponent.core <= effect.amount ? 100 : 3.5,
       };
       options.push({ score: scores[card.itemEffect], action });

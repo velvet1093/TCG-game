@@ -32,14 +32,14 @@ test("items use their correct target side and reject missing or full targets bef
   const [player, rival] = game.sides;
   player.hand = [getCard("patch"), getCard("flare")];
   player.pulse = 3;
-  player.board[1] = unit("bell", 3);
-  rival.board[0] = unit("foam");
+  player.board[1] = unit("bell", 30);
+  rival.board[0] = unit("foam", 20);
   assert.match(act(game, 0, { type: "item", hand: 0, lane: 0 }), /allied unit/);
   assert.match(act(game, 0, { type: "item", hand: 1, lane: 1 }), /rival unit/);
   assert.equal(player.pulse, 3);
   assert.equal(act(game, 0, { type: "item", hand: 0, lane: 1 }), "");
-  assert.equal(player.board[1].health, 4);
-  assert.equal(rival.board[0].health, 1);
+  assert.equal(player.board[1].health, 60);
+  assert.equal(rival.board[0].health, 20);
   assert.equal(act(game, 0, { type: "item", hand: 0, lane: 0 }), "");
   assert.equal(player.board[1].ready, true);
   assert.equal(rival.board[0], null);
@@ -52,10 +52,10 @@ test("Core effects are capped and the rival can use an item to win", () => {
   const [player, rival] = game.sides;
   player.hand = [getCard("flask")];
   assert.match(act(game, 0, { type: "item", hand: 0 }), /full health/);
-  player.core = 19;
+  player.core = 290;
   assert.equal(act(game, 0, { type: "item", hand: 0 }), "");
-  assert.equal(player.core, 20);
-  player.core = 2;
+  assert.equal(player.core, 300);
+  player.core = 20;
   act(game, 0, { type: "end" });
   rival.pulse = 3;
   rival.hand.unshift(getCard("charge"));
@@ -75,7 +75,7 @@ test("item drafts fit the effect price and skill-only drafts preserve scope and 
   assert.deepEqual(cardIssues(item), []);
   assert.match(cardIssues({ ...item, cost: 1 })[0], /at least 2 Pulse/);
   const abilities = templateDraft({ kind: "unit", mode: "abilities", concept: "fast fire duelist",
-    current: { cost: 2, attack: 3, health: 1 }, locked: { active1: "strike" } });
+    current: { cost: 2, attack: 30, health: 10 }, locked: { active1: "strike" } });
   assert.equal(abilities.active1.name, "Strike");
   assert.deepEqual(abilities.active2.effects, ["heavy"]);
   assert.equal(abilities.ability, "haste");

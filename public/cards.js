@@ -15,31 +15,41 @@ export const FACTIONS = {
 
 export const ABILITIES = {
   basic: { name: "None", text: "No passive skill.", weight: 0 },
-  haste: { name: "Rush", text: "Can act the turn it enters.", weight: 2 },
-  guard: { name: "Ward", text: "Block the first point of damage from each opposing strike.", weight: 2 },
-  draw: { name: "Insight", text: "On deploy, draw one card.", weight: 2 },
-  heal: { name: "Renew", text: "On deploy, restore 2 Core health.", weight: 1 },
-  ping: { name: "Spark", text: "On deploy, deal 1 damage to the opposing unit in this lane.", weight: 1 },
+  haste: { name: "Rush", text: "Can act the turn it enters.", weight: 20 },
+  guard: { name: "Ward", amount: 10, text: "Block 10 damage from each opposing strike.", weight: 20 },
+  draw: { name: "Insight", text: "On deploy, draw one card.", weight: 20 },
+  heal: { name: "Renew", amount: 20, text: "On deploy, restore 20 Core health.", weight: 10 },
+  ping: { name: "Spark", amount: 10, text: "On deploy, deal 10 damage to the opposing unit in this lane.", weight: 10 },
 };
 
 export const RARITIES = {
   common: { name: "Common", minPulse: 1, bonus: 0 },
-  uncommon: { name: "Uncommon", minPulse: 2, bonus: 1 },
-  rare: { name: "Rare", minPulse: 3, bonus: 2 },
-  legendary: { name: "Legendary", minPulse: 4, bonus: 3 },
+  uncommon: { name: "Uncommon", minPulse: 2, bonus: 20 },
+  rare: { name: "Rare", minPulse: 3, bonus: 50 },
+  legendary: { name: "Legendary", minPulse: 4, bonus: 100 },
 };
 
 export const ITEM_EFFECTS = {
   draw: { name: "Draw", target: "self", cost: 1, rarity: "common", amount: 1, text: "Draw 1 card from your deck." },
-  "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, rarity: "common", amount: 3, text: "Restore 3 HP to one injured allied unit." },
-  "damage-enemy": { name: "Blast Unit", target: "enemy", cost: 2, rarity: "uncommon", amount: 2, text: "Deal 2 damage to one rival unit." },
-  "heal-core": { name: "Restore Core", target: "self", cost: 2, rarity: "uncommon", amount: 3, text: "Restore 3 health to your Core." },
-  "damage-core": { name: "Sabotage Core", target: "rival", cost: 3, rarity: "rare", amount: 2, text: "Deal 2 damage to the rival Core." },
+  "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, rarity: "common", amount: 30, text: "Restore 30 HP to one injured allied unit." },
+  "damage-enemy": { name: "Blast Unit", target: "enemy", cost: 2, rarity: "uncommon", amount: 20, text: "Deal 20 damage to one rival unit." },
+  "heal-core": { name: "Restore Core", target: "self", cost: 2, rarity: "uncommon", amount: 30, text: "Restore 30 health to your Core." },
+  "damage-core": { name: "Sabotage Core", target: "rival", cost: 3, rarity: "rare", amount: 20, text: "Deal 20 damage to the rival Core." },
 };
 
-export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
+export const LIMITS = { deck: 15, copies: 3, core: 300, fatigue: 10, lanes: 3 };
+export const STAT_STEP = 10;
+export const MAX_HP = 1000;
+export const MAX_ATTACK = 270;
+export const STAGE_BALANCE = {
+  1: { budgetBonus: 0, attackCaps: [70, 80, 100, 150], healthCaps: [90, 100, 130, 200], typicalAttack: 30, typicalHealth: 60 },
+  2: { budgetBonus: 60, attackCaps: [100, 120, 150, 190], healthCaps: [150, 180, 220, 320], typicalAttack: 60, typicalHealth: 110 },
+  3: { budgetBonus: 140, attackCaps: [150, 180, 220, MAX_ATTACK], healthCaps: [240, 300, 450, MAX_HP], typicalAttack: 90, typicalHealth: 170 },
+};
+export const COLLECTION_STATS_VERSION = 2;
 export const EVOLUTION_TURNS = 3;
 export const unitStage = (card) => card.stage ?? 1;
+export const balanceStage = (stage) => Number.isInteger(stage) && Object.hasOwn(STAGE_BALANCE, stage) ? stage : 1;
 export const evolvesFrom = (card, prior) => !isItem(card) && !isItem(prior) &&
   Boolean(card.evolvesFrom) && card.evolvesFrom === prior.id && unitStage(card) === unitStage(prior) + 1;
 
@@ -70,7 +80,8 @@ export const FIELD_LABELS = {
   health: "Health", active1: "Attack 1", active2: "Attack 2", ability: "Passive skill", flavor: "Flavor text",
   itemEffect: "Item effect",
 };
-const statRanges = { cost: [1, 6], attack: [1, 7], health: [1, 9] };
+const statRanges = { cost: [1, 6], attack: [STAT_STEP, MAX_ATTACK], health: [STAT_STEP, MAX_HP] };
+const roundStat = (stat) => Math.round(stat / STAT_STEP) * STAT_STEP;
 const validRarity = (rarity) => typeof rarity === "string" && Object.hasOwn(RARITIES, rarity);
 export function rarityOf(card) {
   return card.rarity ?? (isItem(card) ? ITEM_EFFECTS[card.itemEffect]?.rarity : undefined) ?? "common";
@@ -87,8 +98,22 @@ export function itemEffectFits(itemEffect, rarity) {
     RARITIES[rarity].minPulse >= RARITIES[ITEM_EFFECTS[itemEffect].rarity].minPulse;
 }
 
-export function statBudget(cost, rarity = "common") {
-  return cost * 2 + 2 + (validRarity(rarity) ? RARITIES[rarity].bonus : 0);
+export function unitCaps(stage, rarity) {
+  const tier = validRarity(rarity) ? RARITIES[rarity].minPulse - 1 : 0;
+  const profile = STAGE_BALANCE[balanceStage(stage)];
+  return { attack: profile.attackCaps[tier], health: profile.healthCaps[tier] };
+}
+
+export function statBudget(cost, rarity = "common", stage = 1) {
+  if (stage === 3 && rarity === "legendary" && cost === 6) return 1080;
+  return cost * 20 + 40 + STAGE_BALANCE[balanceStage(stage)].budgetBonus +
+    (validRarity(rarity) ? RARITIES[rarity].bonus : 0);
+}
+
+export function migrateCollection(state) {
+  if (state.statsVersion >= COLLECTION_STATS_VERSION) return state;
+  return { ...state, statsVersion: COLLECTION_STATS_VERSION, cards: state.cards.map((card) =>
+    isItem(card) ? card : { ...card, attack: card.attack * STAT_STEP, health: card.health * STAT_STEP }) };
 }
 
 function draftRarities(preferred, locked) {
@@ -113,6 +138,7 @@ function fieldIssue(field, value) {
   if (Object.hasOwn(statRanges, field)) {
     const [min, max] = statRanges[field];
     if (!Number.isInteger(value) || value < min || value > max) return `${FIELD_LABELS[field]} must be ${min}–${max}.`;
+    if (field !== "cost" && value % STAT_STEP) return `${FIELD_LABELS[field]} must use increments of ${STAT_STEP}.`;
   }
   return "";
 }
@@ -131,13 +157,18 @@ export function cardIssues(card) {
     return issues;
   }
   if (sameAttack(card.active1, card.active2)) issues.push("Give the two attacks different names.");
-  if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost, rarity)) {
+  const stage = unitStage(card);
+  const caps = unitCaps(stage, rarity);
+  if (issues.length === 0 && (card.attack > caps.attack || card.health > caps.health)) {
+    issues.push(`Stage ${stage} ${RARITIES[rarity].name} units allow up to ${caps.attack} Attack and ${caps.health} HP.`);
+  }
+  if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost, rarity, stage)) {
     issues.push("Reduce the stats, raise the rarity, or increase the Pulse cost to stay within budget.");
   }
   return issues;
 }
 
-export function lockedCardIssue(locked, kind = "unit") {
+export function lockedCardIssue(locked, kind = "unit", stage = 1) {
   for (const field of cardFields(kind)) {
     if (!Object.hasOwn(locked, field)) continue;
     const issue = fieldIssue(field, locked[field]);
@@ -159,8 +190,13 @@ export function lockedCardIssue(locked, kind = "unit") {
   if (sameAttack(locked.active1, locked.active2)) {
     return "Unlock one of the attacks with the same name.";
   }
-  const minimum = (locked.attack ?? 1) + (locked.health ?? 1) + (ABILITIES[locked.ability]?.weight ?? 0);
-  if (rarities.every((rarity) => minimum > statBudget(locked.cost ?? 6, rarity))) {
+  const minAttack = locked.attack ?? STAT_STEP;
+  const minHealth = locked.health ?? STAT_STEP;
+  const minimum = minAttack + minHealth + (ABILITIES[locked.ability]?.weight ?? 0);
+  if (rarities.every((rarity) => {
+    const caps = unitCaps(stage, rarity);
+    return minAttack > caps.attack || minHealth > caps.health || minimum > statBudget(locked.cost ?? 6, rarity, stage);
+  })) {
     return "The locked values exceed the stat budget. Unlock a stat, ability, rarity, or Pulse cost.";
   }
   return "";
@@ -191,8 +227,8 @@ function itemEffectChoices(itemEffect, locked) {
   return [...new Set([itemEffect, fallback[itemEffect], "draw"].filter(Boolean))];
 }
 
-export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {} } = {}) {
-  const issue = lockedCardIssue(locked, kind);
+export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {}, stage = unitStage(current) } = {}) {
+  const issue = lockedCardIssue(locked, kind, stage);
   if (issue) throw new Error(issue);
   if (kind === "item") {
     const itemEffect = locked.itemEffect ?? draft.itemEffect;
@@ -207,18 +243,18 @@ export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {
   const skills = fitUnitSkills(draft, locked);
   const invalid = UNIT_SKILL_FIELDS.map((field) => fieldIssue(field, skills[field])).find(Boolean);
   if (invalid) throw new Error(invalid);
-  const remaining = statBudget(current.cost, rarityOf(current)) - current.attack - current.health;
+  const remaining = statBudget(current.cost, rarityOf(current), stage) - current.attack - current.health;
   if (!Object.hasOwn(locked, "ability") && ABILITIES[skills.ability].weight > remaining) {
     const alternatives = { guard: "heal", haste: "ping", draw: "heal" };
-    skills.ability = remaining >= 1 ? alternatives[skills.ability] ?? "basic" : "basic";
+    skills.ability = remaining >= STAT_STEP ? alternatives[skills.ability] ?? "basic" : "basic";
   }
   return skills;
 }
 
 // Keep the proposed ability and rarity when possible. Trim unlocked stats
 // before raising an unlocked cost.
-export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
-  const issue = lockedCardIssue(locked, kind);
+export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit", stage = 1) {
+  const issue = lockedCardIssue(locked, kind, stage);
   if (issue) throw new Error(issue);
   const card = Object.fromEntries(cardFields(kind).map((key) => [key, locked[key] ?? draft[key]]));
   if (kind === "item") card.kind = "item";
@@ -241,27 +277,32 @@ export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
   }
   Object.assign(card, fitUnitSkills(card, locked));
   for (const [key, [min, max]] of Object.entries(statRanges)) {
-    if (Number.isInteger(card[key])) card[key] = Math.min(max, Math.max(min, card[key]));
+    if (Number.isInteger(card[key])) {
+      const stat = key === "cost" ? card[key] : roundStat(card[key]);
+      card[key] = Math.min(max, Math.max(min, stat));
+    }
   }
-  const minAttack = locked.attack ?? 1;
-  const minHealth = locked.health ?? 1;
+  const minAttack = locked.attack ?? STAT_STEP;
+  const minHealth = locked.health ?? STAT_STEP;
   const abilities = Object.hasOwn(locked, "ability") ? [locked.ability] : [...new Set([card.ability, "basic"])];
   const costs = Object.hasOwn(locked, "cost") ? [locked.cost] : [1, 2, 3, 4, 5, 6].filter((cost) => cost >= card.cost);
   for (const ability of abilities) {
     if (!Object.hasOwn(ABILITIES, ability)) continue;
     for (const rarity of rarities) {
+      const caps = unitCaps(stage, rarity);
+      if (minAttack > caps.attack || minHealth > caps.health) continue;
       for (const cost of costs) {
         if (cost < RARITIES[rarity].minPulse) continue;
-        const room = statBudget(cost, rarity) - ABILITIES[ability].weight;
+        const room = statBudget(cost, rarity, stage) - ABILITIES[ability].weight;
         if (room < minAttack + minHealth) continue;
-        const attack = Math.min(card.attack, room - minHealth);
-        const health = Math.min(card.health, room - attack);
+        const attack = Math.min(card.attack, caps.attack, room - minHealth);
+        const health = Math.min(card.health, caps.health, room - attack);
         const fitted = { ...card, rarity, cost, attack, health, ability };
-        if (cardIssues(fitted).length === 0) return fitted;
+        if (cardIssues({ ...fitted, stage }).length === 0) return fitted;
       }
     }
   }
-  throw new Error(cardIssues(card)[0] || "Couldn’t generate a valid card.");
+  throw new Error(cardIssues({ ...card, stage })[0] || "Couldn’t generate a valid card.");
 }
 
 const sampleMoves = {
@@ -277,7 +318,7 @@ const sampleMoves = {
 
 const sample = (id, name, faction, cost, attack, health, ability, flavor) => {
   const [first, second, effects] = sampleMoves[id];
-  return { id, name, faction, cost, attack, health, ability, flavor, art: "",
+  return { id, name, faction, cost, attack: attack * STAT_STEP, health: (health + 2) * STAT_STEP, ability, flavor, art: "",
     active1: { name: first, concept: "", effects: ["hit"] },
     active2: second ? { name: second, concept: "", effects } : emptyAttack() };
 };
@@ -373,8 +414,8 @@ const movePatterns = {
   siphon: ["Toll", ["hit", "drain"]], sweep: ["Arc", ["hit", "splash"]],
 };
 
-export function templateDraft({ name = "", character = "", faction = "", rarity, concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
-  const issue = lockedCardIssue(locked, kind);
+export function templateDraft({ name = "", character = "", faction = "", rarity, stage = 1, concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
+  const issue = lockedCardIssue(locked, kind, stage);
   if (issue) throw new Error(issue);
   if (mode === "effects") return fitEffectDraft({}, current, locked);
   const contextName = locked.name ?? (character || name);
@@ -417,16 +458,19 @@ export function templateDraft({ name = "", character = "", faction = "", rarity,
     active1: { name: `${motif} ${variant % 2 ? "Counter" : "Cut"}`, concept: "", effects: ["hit"] },
     active2: pattern ? { name: `${motif} ${pattern[0]}`, concept: "", effects: pattern[1] } : emptyAttack(),
   };
-  if (mode === "abilities") return fitAbilityDraft(skills, { kind, locked, current });
+  if (mode === "abilities") return fitAbilityDraft(skills, { kind, locked, current, stage });
   const tier = draftRarities(chosenRarity ?? "common", locked)[0];
   const cost = locked.cost ?? Math.max(RARITIES[tier].minPulse,
     /legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
-  const stats = statBudget(cost, tier) - ABILITIES[ability].weight;
-  const attack = Math.min(7, Math.max(1, Math.floor(stats / 2) + (ability === "haste" ? 1 : ability === "guard" ? -1 : 0)));
+  const profile = STAGE_BALANCE[balanceStage(stage)];
+  const bonus = RARITIES[tier].bonus;
+  const attack = profile.typicalAttack + roundStat(bonus / 3) +
+    (ability === "haste" ? STAT_STEP : ability === "guard" ? -STAT_STEP : 0);
+  const health = profile.typicalHealth + roundStat(bonus / 2) + (ability === "guard" ? STAT_STEP : 0);
   const card = fitDraft({
-    name: character || preset.name, faction: selected, rarity: tier, cost, attack, health: stats - attack,
+    name: character || preset.name, faction: selected, rarity: tier, cost, attack, health,
     ...skills, flavor: "",
-  }, locked);
+  }, locked, kind, stage);
   if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);
   return card;
 }

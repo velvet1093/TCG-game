@@ -1,23 +1,23 @@
-import { ABILITIES, EVOLUTION_TURNS, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, RARITIES, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+import { ABILITIES, COLLECTION_STATS_VERSION, EVOLUTION_TURNS, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, RARITIES, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
   draftFields as fieldsFor, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, fitEffectDraft, isItem, lockedCardIssue,
-  evolutionIssue, evolvesFrom, itemEffectFits, minimumPulse, rarityOf, statBudget, templateDraft, unitStage } from "./cards.js";
+  evolutionIssue, evolvesFrom, itemEffectFits, migrateCollection, minimumPulse, rarityOf, statBudget, templateDraft, unitCaps, unitStage } from "./cards.js";
 import { act, actionIssue, createGame, evolutionTurnsLeft, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 import { draftFlavor } from "./lore.js";
-import { ATTACK_EFFECTS, ATTACK_SLOTS, activeAttacks, attackPulse, emptyAttack, readAttack } from "./attacks.js";
+import { ATTACK_EFFECTS, ATTACK_SLOTS, activeAttacks, attackPulse, emptyAttack, laneAttackDamage, readAttack } from "./attacks.js";
 
 const main = document.querySelector("#main");
 const section = (id) => document.querySelector(`#${id}-template`).content.cloneNode(true);
 const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
-  id: "", kind: "unit", name: "", faction: "", rarity: "common", cost: 2, attack: 2, health: 3,
+  id: "", kind: "unit", name: "", faction: "", rarity: "common", cost: 2, attack: 20, health: 60,
   stage: 1, evolvesFrom: "",
   ability: "basic", active1: emptyAttack(), active2: emptyAttack(), itemEffect: "draw",
   flavor: "", art: "", character: "", concept: "", shareArt: false, locks: [],
 });
 let file = blankCard();
-let library = { cards: [], deck: [...STARTER_DECK] };
+let library = { cards: [], deck: [...STARTER_DECK], statsVersion: COLLECTION_STATS_VERSION };
 let database;
 let writes = Promise.resolve();
 let storageWarning = "";
@@ -35,6 +35,7 @@ let artLoading = false;
 let saving = false;
 let drafting = false;
 let aiAvailable;
+let hostedOpenRouter;
 let draftProvider;
 let openRouterKey = "";
 let openRouterModel = OPENROUTER_DEFAULT_MODEL;
@@ -49,7 +50,8 @@ const abilityOf = (card) => Object.hasOwn(ABILITIES, card.ability) ? ABILITIES[c
 const mobile = matchMedia("(max-width: 610px)");
 const studioFields = [...new Set([...cardFields("unit"), ...cardFields("item")])];
 const draftFields = (mode) => fieldsFor(file.kind, mode);
-const selectedProvider = () => draftProvider ?? (aiAvailable ? "openai" : "openrouter");
+const selectedProvider = () => draftProvider ?? (hostedOpenRouter || !aiAvailable ? "openrouter" : "openai");
+const routerReady = () => Boolean(hostedOpenRouter || openRouterKey.trim());
 
 function openStorage() {
   return new Promise((resolve, reject) => {
@@ -63,12 +65,7 @@ function openStorage() {
 async function loadStorage() {
   try {
     database = await openStorage();
-    const saved = await new Promise((resolve, reject) => {
-      const read = database.transaction("game").objectStore("game").get("collection");
-      read.onsuccess = () => resolve(read.result);
-      read.onerror = () => reject(read.error);
-    });
-    if (Array.isArray(saved?.cards) && Array.isArray(saved?.deck)) library = saved;
+    await updateLibrary((state) => state);
   } catch {
     storageWarning = "Browser storage is unavailable. Any new cards or deck changes will last for this session only.";
     database = undefined;
@@ -77,17 +74,29 @@ async function loadStorage() {
 
 function updateLibrary(update) {
   const result = writes.then(async () => {
-    const next = update(library);
-    if (next === library) return;
-    if (database) {
-      await new Promise((resolve, reject) => {
-        const tx = database.transaction("game", "readwrite");
-        tx.objectStore("game").put(next, "collection");
-        tx.oncomplete = resolve;
-        tx.onabort = () => reject(tx.error);
-      });
+    if (!database) {
+      library = update(library);
+      return;
     }
-    library = next;
+    library = await new Promise((resolve, reject) => {
+      const tx = database.transaction("game", "readwrite");
+      const store = tx.objectStore("game");
+      const read = store.get("collection");
+      let next, failure;
+      read.onsuccess = () => {
+        try {
+          const saved = read.result;
+          const previous = Array.isArray(saved?.cards) && Array.isArray(saved?.deck) ? saved : library;
+          next = update(migrateCollection(previous));
+          if (next !== previous) store.put(next, "collection");
+        } catch (error) {
+          failure = error;
+          tx.abort();
+        }
+      };
+      tx.oncomplete = () => resolve(next);
+      tx.onabort = () => reject(failure ?? tx.error);
+    });
   });
   writes = result.catch(() => {});
   return result;
@@ -101,14 +110,16 @@ function artMarkup(card) {
     : `<span class="card-art placeholder" aria-hidden="true"><span>${faction?.icon ?? "✧"}</span></span>`;
 }
 
-function attackText(move) {
-  return move.effects.map((id) => ATTACK_EFFECTS[id].text).join(" ") || "Choose a combat effect.";
+function attackText(move, card) {
+  return move.effects.map((id) => id === "hit" || id === "heavy"
+    ? `Deal ${laneAttackDamage(Number(card.attack) || 0, [id])} damage across this lane.`
+    : ATTACK_EFFECTS[id].text).join(" ") || "Choose a combat effect.";
 }
 
-function attackMarkup(move) {
+function attackMarkup(move, card) {
   return `<div class="card-skill"><div><strong>${escapeHTML(move.name)}</strong><span class="skill-price" title="Pulse cost">✦ ${attackPulse(move)}</span></div>
     ${move.concept ? `<p class="move-concept">${escapeHTML(move.concept)}</p>` : ""}
-    <p>${attackText(move)}</p></div>`;
+    <p>${attackText(move, card)}</p></div>`;
 }
 
 function cardMarkup(card) {
@@ -132,7 +143,7 @@ function cardMarkup(card) {
       ${item ? `<div class="card-skill item-effect"><div><strong>${effect?.name ?? "Choose effect"}</strong><span>One use</span></div><p>${effect?.text ?? ""}</p></div>` : `
       <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
       ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
-      ${ATTACK_SLOTS.map((slot) => readAttack(card[slot])).filter((move) => move.name.trim()).map(attackMarkup).join("")}`}
+      ${ATTACK_SLOTS.map((slot) => readAttack(card[slot])).filter((move) => move.name.trim()).map((move) => attackMarkup(move, card)).join("")}`}
       ${card.flavor ? `<p class="flavor">${escapeHTML(card.flavor)}</p>` : ""}
     </div>
   </article>`;
@@ -219,7 +230,7 @@ function unitTrayMarkup(unit, lane) {
   const buttons = activeAttacks(unit.card).map((move) => {
     const issue = actionIssue(game, 0, { type: "skill", lane, skill: move.slot });
     return `<button type="button" data-action="skill" data-lane="${lane}" data-skill="${move.slot}" ${issue ? "disabled" : ""}>
-      <span><strong>${escapeHTML(move.name)}</strong><small>${issue || attackText(move)}</small></span><b class="skill-price">✦ ${attackPulse(move)}</b>
+      <span><strong>${escapeHTML(move.name)}</strong><small>${issue || attackText(move, unit.card)}</small></span><b class="skill-price">✦ ${attackPulse(move)}</b>
     </button>`;
   }).join("");
   const shift = [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
@@ -569,27 +580,34 @@ function updateStudio() {
   document.querySelector("#ability-help").textContent = ability.text;
   for (const slot of ATTACK_SLOTS) {
     const move = readAttack(file[slot]);
-    document.getElementById(`${slot}-help`).textContent = move.effects.length ? `${attackPulse(move)} Pulse · ${attackText(move)}` : "";
+    document.getElementById(`${slot}-help`).textContent = move.effects.length ? `${attackPulse(move)} Pulse · ${attackText(move, file)}` : "";
     document.querySelector(`[data-action="clear-attack"][data-slot="${slot}"]`).hidden = !(move.name || move.concept || move.effects.length);
   }
   document.querySelector("#reroll-flavor").disabled = file.locks.includes("flavor");
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
-  const available = statBudget(Number(file.cost) || 0, file.rarity);
+  const available = statBudget(Number(file.cost) || 0, file.rarity, file.stage);
+  const caps = unitCaps(file.stage, file.rarity);
+  form.elements.attack.max = caps.attack;
+  form.elements.health.max = caps.health;
   const minPulse = minimumPulse(file);
   const budget = document.querySelector("#budget");
-  budget.textContent = item ? `Minimum play cost · ${minPulse} Pulse` : `Stat budget ${spent} / ${available} · Minimum ${minPulse} Pulse`;
+  budget.textContent = item ? `Minimum play cost · ${minPulse} Pulse`
+    : `Stat budget ${spent} / ${available} · Max ${caps.attack} ATK / ${caps.health} HP · Minimum ${minPulse} Pulse`;
   budget.classList.toggle("over-budget", file.cost < minPulse ||
-    (item ? !itemEffectFits(file.itemEffect, file.rarity) : spent > available));
+    (item ? !itemEffectFits(file.itemEffect, file.rarity) : spent > available || file.attack > caps.attack || file.health > caps.health));
   document.querySelector("#form-status").textContent = formMessage || storageWarning;
 }
 
 function updateDraftControls(form) {
   const provider = selectedProvider();
   const router = provider === "openrouter";
-  const ready = router ? Boolean(openRouterKey.trim()) : Boolean(aiAvailable);
+  const ready = router ? routerReady() : Boolean(aiAvailable);
   form.elements.draftProvider.querySelector('[value="openai"]').disabled = !aiAvailable;
   form.elements.draftProvider.value = provider;
   document.querySelector("#openrouter-settings").hidden = !router;
+  document.querySelector("#openrouter-key-help").textContent = hostedOpenRouter
+    ? "A private server key is configured. Leave this blank to use it, or enter a temporary override."
+    : "A key entered here stays in memory until you reload and goes directly to OpenRouter.";
   document.querySelector("#draft-art-label").textContent = `Include artwork in the ${router ? "OpenRouter" : "OpenAI"} request`;
   const allLocked = draftFields().every((field) => file.locks.includes(field));
   const allAbilitiesLocked = draftFields("abilities").every((field) => file.locks.includes(field));
@@ -653,7 +671,7 @@ async function readArtwork(artwork) {
 
 function applyDraft(draft, brief) {
   const result = brief.mode === "abilities" ? fitAbilityDraft(draft, brief)
-    : brief.mode === "effects" ? fitEffectDraft(draft, brief.current, brief.locked) : fitDraft(draft, brief.locked, brief.kind);
+    : brief.mode === "effects" ? fitEffectDraft(draft, brief.current, brief.locked) : fitDraft(draft, brief.locked, brief.kind, brief.stage);
   revision++;
   for (const key of draftFields(brief.mode)) {
     if (!Object.hasOwn(brief.locked, key)) file[key] = result[key];
@@ -663,7 +681,8 @@ function applyDraft(draft, brief) {
 
 function draftBrief(mode) {
   const locked = Object.fromEntries(draftFields(mode).filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
-  const issue = lockedCardIssue(locked, file.kind);
+  const stage = isItem(file) ? undefined : file.stage;
+  const issue = lockedCardIssue(locked, file.kind, stage);
   if (issue) throw new Error(issue);
   const current = mode ? {
     rarity: file.rarity, itemEffect: isItem(file) ? file.itemEffect : undefined,
@@ -673,7 +692,7 @@ function draftBrief(mode) {
     active2: isItem(file) ? undefined : readAttack(file.active2),
   } : undefined;
   return { name: file.name.trim(), character: file.character.trim(), faction: file.faction, rarity: file.rarity, concept: file.concept.trim(),
-    locked, kind: file.kind, mode, current };
+    locked, kind: file.kind, stage, mode, current };
 }
 
 function setDraftMessage(mode, message) {
@@ -697,7 +716,7 @@ function quickFill(mode) {
 async function autoFill(mode) {
   const useRouter = selectedProvider() === "openrouter";
   if (drafting) return;
-  if (!(useRouter ? openRouterKey.trim() : aiAvailable)) {
+  if (!(useRouter ? routerReady() : aiAvailable)) {
     if (mode) quickFill(mode);
     return;
   }
@@ -721,13 +740,13 @@ async function autoFill(mode) {
   updateStudio();
   try {
     let draft;
-    if (useRouter) {
+    if (useRouter && openRouterKey.trim()) {
       draft = await requestOpenRouterDraft(brief, { apiKey: openRouterKey, model: openRouterModel });
     } else {
-      const response = await fetch("/api/draft", {
+      const response = await fetch(useRouter ? "/api/openrouter" : "/api/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(brief),
+        body: JSON.stringify(useRouter ? { ...brief, model: openRouterModel } : brief),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "AI auto-fill is unavailable.");
@@ -905,7 +924,8 @@ main.addEventListener("submit", (event) => {
 window.addEventListener("hashchange", render);
 await loadStorage();
 render();
-fetch("/api/status").then((response) => response.json()).then(({ enabled }) => {
+fetch("/api/status", { cache: "no-store" }).then((response) => response.json()).then(({ enabled, openRouter }) => {
   aiAvailable = enabled;
+  hostedOpenRouter = openRouter;
   updateStudio();
 }).catch(() => { aiAvailable = false; });

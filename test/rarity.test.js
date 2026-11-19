@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cardIssues, fitAbilityDraft, fitDraft, lockedCardIssue, rarityOf, templateDraft } from "../public/cards.js";
 
-const unit = { name: "Stormkeeper", faction: "storm", cost: 3, attack: 4, health: 4, ability: "guard", flavor: "" };
+const unit = { name: "Stormkeeper", faction: "storm", cost: 3, attack: 50, health: 80, ability: "guard", flavor: "" };
 const item = { kind: "item", name: "Sealed Charge", faction: "alloy", cost: 3, itemEffect: "damage-core", flavor: "" };
 
 test("unit rarity raises the stat budget and the minimum deploy cost", () => {
@@ -26,7 +26,7 @@ test("Quick fill and full drafts fit rarity around the supplied brief and locks"
   assert.equal(boss.rarity, "legendary");
   assert.ok(boss.cost >= 4);
   assert.deepEqual(cardIssues(boss), []);
-  const fixedStats = fitDraft({ ...unit, rarity: "common" }, { cost: 3, attack: 4, health: 4, ability: "guard" });
+  const fixedStats = fitDraft({ ...unit, rarity: "common" }, { cost: 3, attack: 50, health: 80, ability: "guard" });
   assert.equal(fixedStats.rarity, "rare");
   const fixedCost = fitDraft({ ...unit, rarity: "legendary" }, { cost: 2 });
   assert.equal(fixedCost.rarity, "uncommon");
@@ -38,7 +38,7 @@ test("Quick fill and full drafts fit rarity around the supplied brief and locks"
 
 test("ability-only drafts use the existing rarity for both card types", () => {
   const draft = { ability: "guard" };
-  assert.equal(fitAbilityDraft(draft, { current: unit }).ability, "basic");
+  assert.equal(fitAbilityDraft(draft, { current: { ...unit, attack: 20 } }).ability, "basic");
   assert.equal(fitAbilityDraft(draft, { current: { ...unit, rarity: "rare" } }).ability, "guard");
   assert.deepEqual(fitAbilityDraft(item, { kind: "item", current: item }), { itemEffect: "damage-core" });
   assert.deepEqual(fitAbilityDraft(item, { kind: "item", current: { ...item, rarity: "uncommon" } }),

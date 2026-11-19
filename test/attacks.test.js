@@ -22,12 +22,12 @@ test("a composed attack deals lane damage, spends Pulse and stuns for one turn",
   const game = createGame(STARTER_CARDS, STARTER_DECK, RIVAL_DECK);
   const [player, rival] = game.sides;
   player.board[0] = {
-    card: { ...STARTER_CARDS[0], active1: { ...example, effects: ["hit", "stun"] } }, ready: true, health: 2,
+    card: { ...STARTER_CARDS[0], active1: { ...example, effects: ["hit", "stun"] } }, ready: true, health: 20,
   };
   const opponent = STARTER_CARDS.find((card) => card.id === "sprout");
   rival.board[0] = { card: opponent, ready: true, health: opponent.health };
   assert.equal(act(game, 0, { type: "skill", lane: 0, skill: "active1" }), "");
-  assert.equal(rival.board[0].health, 2);
+  assert.equal(rival.board[0].health, 40);
   assert.equal(player.pulse, 0);
   assert.match(game.log.join(" "), /Clockwork Eclipse/);
   act(game, 0, { type: "end" });
@@ -39,7 +39,7 @@ test("a composed attack deals lane damage, spends Pulse and stuns for one turn",
 
 test("AI drafts keep user-supplied names and surface identified characters", () => {
   const result = { name: "Generic Hero", recognizedCharacter: "Example Hero", faction: "veil",
-    cost: 3, attack: 3, health: 3, active1: { ...example, effects: ["hit", "stun"] },
+    cost: 3, attack: 30, health: 30, active1: { ...example, effects: ["hit", "stun"] },
     active2: emptyAttack(), ability: "guard", flavor: "The clock stops before the bell rings." };
   const inferred = normalizeDraft(result, {});
   assert.equal(inferred.name, "Example Hero");

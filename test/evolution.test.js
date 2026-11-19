@@ -5,8 +5,8 @@ import { act, createGame, evolutionTurnsLeft, playRival } from "../public/engine
 import { draftSchemaFor } from "../public/ai-draft.js";
 
 const base = STARTER_CARDS.find(({ id }) => id === "foam");
-const second = { ...base, id: "foam-two", name: "Foam Knight", stage: 2, evolvesFrom: base.id, cost: 3, health: 5, ability: "draw" };
-const third = { ...base, id: "foam-three", name: "Foam Regent", stage: 3, evolvesFrom: second.id, cost: 4, health: 7 };
+const second = { ...base, id: "foam-two", name: "Foam Knight", stage: 2, evolvesFrom: base.id, cost: 3, health: 50, ability: "draw" };
+const third = { ...base, id: "foam-three", name: "Foam Regent", stage: 3, evolvesFrom: second.id, cost: 4, health: 70 };
 const start = () => createGame([...STARTER_CARDS, second, third], STARTER_DECK, RIVAL_DECK, () => 0.999);
 const nextTurn = (game) => {
   assert.equal(act(game, 0, { type: "end" }), "");
@@ -45,7 +45,7 @@ test("units wait three owner turns per stage and keep damage and readiness when 
   evolve.lane = 1;
   nextTurn(game);
   assert.match(act(game, 0, evolve), /needs 1 more turn/);
-  unit.health--;
+  unit.health -= 10;
   unit.stunned = true;
   nextTurn(game);
   const charged = player.pulse;
@@ -59,7 +59,7 @@ test("units wait three owner turns per stage and keep damage and readiness when 
   assert.deepEqual(player.discard, [base]);
   assert.equal(player.board[1], unit);
   assert.equal(unit.card, second);
-  assert.equal(unit.health, second.health - 1);
+  assert.equal(unit.health, second.health - 10);
   assert.equal(unit.ready, false);
   assert.match(act(game, 0, evolve), /needs 3 more turns/);
   nextTurn(game);
@@ -68,7 +68,7 @@ test("units wait three owner turns per stage and keep damage and readiness when 
   nextTurn(game);
   assert.equal(act(game, 0, evolve), "");
   assert.equal(unit.card, third);
-  assert.equal(unit.health, third.health - 1);
+  assert.equal(unit.health, third.health - 10);
   assert.equal(unit.ready, true);
   assert.deepEqual(player.discard, [base, second]);
 });

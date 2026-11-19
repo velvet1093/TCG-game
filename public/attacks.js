@@ -1,13 +1,18 @@
 export const ATTACK_SLOTS = ["active1", "active2"];
 export const ATTACK_EFFECTS = {
   hit: { label: "Lane damage", pulse: 0, text: "Deal base Attack damage across this lane." },
-  heavy: { label: "Boosted lane damage", pulse: 1, text: "Deal base Attack +2 damage across this lane." },
-  splash: { label: "Adjacent damage", pulse: 1, text: "Deal 1 damage to each adjacent enemy unit." },
-  drain: { label: "Core drain", pulse: 1, text: "Restore 2 Core health if this move's lane hit deals damage." },
-  mend: { label: "Self-heal", pulse: 1, text: "Restore up to 3 HP to this unit." },
+  heavy: { label: "Boosted lane damage", pulse: 1, amount: 20, text: "Deal base Attack +20 damage across this lane." },
+  splash: { label: "Adjacent damage", pulse: 1, amount: 10, text: "Deal 10 damage to each adjacent enemy unit." },
+  drain: { label: "Core drain", pulse: 1, amount: 20, text: "Restore 20 Core health if this move's lane hit deals damage." },
+  mend: { label: "Self-heal", pulse: 1, amount: 30, text: "Restore up to 30 HP to this unit." },
   stun: { label: "Stun", pulse: 2, text: "The opposing unit in this lane skips its next action." },
   draw: { label: "Draw", pulse: 1, text: "Draw 1 card." },
 };
+
+export function laneAttackDamage(attack, effects) {
+  if (effects.includes("heavy")) return attack + ATTACK_EFFECTS.heavy.amount;
+  return effects.includes("hit") ? attack : 0;
+}
 
 const legacyAttacks = {
   strike: { name: "Strike", effects: ["hit"] },
