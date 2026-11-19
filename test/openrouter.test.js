@@ -6,8 +6,8 @@ const draft = { name: "Other name", faction: "tide", cost: 2, attack: 2, health:
 const reply = () => Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(draft) } }] });
 
 test("OpenRouter gets a structured brief and the returned card keeps its field locks", async () => {
-  const locked = { name: "Wave Runner", attack: 4 };
-  const brief = { name: locked.name, faction: "tide", concept: "An apprentice surfer", locked };
+  const locked = { name: "Wave Runner", attack: 4, rarity: "legendary" };
+  const brief = { name: locked.name, faction: "tide", rarity: locked.rarity, concept: "An apprentice surfer", locked };
   const result = await requestOpenRouterDraft(brief, {
     apiKey: " sample-key ",
     request: async (url, options) => {
@@ -22,12 +22,14 @@ test("OpenRouter gets a structured brief and the returned card keeps its field l
       assert.equal(sent.provider.require_parameters, true);
       assert.equal(sent.response_format.json_schema.strict, true);
       assert.ok(sent.response_format.json_schema.schema.required.includes("active2"));
+      assert.deepEqual(sent.response_format.json_schema.schema.properties.rarity.enum, ["common", "uncommon", "rare", "legendary"]);
+      assert.match(sent.messages[0].content, /legendary \(minimum 4 Pulse, \+3 unit stat budget\)/);
       assert.equal(sent.messages[1].content.length, 1);
       assert.deepEqual(JSON.parse(sent.messages[1].content[0].text), brief);
       return reply();
     },
   });
-  assert.deepEqual(result, { ...draft, name: "Wave Runner", attack: 4, cost: 3 });
+  assert.deepEqual(result, { ...draft, name: "Wave Runner", rarity: "legendary", attack: 4, cost: 4 });
 });
 
 test("OpenRouter accepts a model ID and sends artwork only when included", async () => {

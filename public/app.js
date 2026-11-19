@@ -1,6 +1,6 @@
-import { ABILITIES, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+import { ABILITIES, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, RARITIES, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
   draftFields as fieldsFor, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, fitEffectDraft, isItem, lockedCardIssue,
-  statBudget, templateDraft } from "./cards.js";
+  itemEffectFits, minimumPulse, rarityOf, statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 import { draftFlavor } from "./lore.js";
@@ -11,7 +11,7 @@ const section = (id) => document.querySelector(`#${id}-template`).content.cloneN
 const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
-  id: "", kind: "unit", name: "", faction: "", cost: 2, attack: 2, health: 3,
+  id: "", kind: "unit", name: "", faction: "", rarity: "common", cost: 2, attack: 2, health: 3,
   ability: "basic", active1: emptyAttack(), active2: emptyAttack(), itemEffect: "draw",
   flavor: "", art: "", character: "", concept: "", shareArt: false, locks: [],
 });
@@ -114,6 +114,7 @@ function cardMarkup(card) {
   const faction = factionOf(card);
   const item = isItem(card);
   const kind = item ? "Item" : "Unit";
+  const rarity = RARITIES[rarityOf(card)]?.name ?? "";
   const effect = ITEM_EFFECTS[card.itemEffect];
   const name = escapeHTML(card.name || `Untitled ${kind.toLowerCase()}`);
   const ability = abilityOf(card);
@@ -123,6 +124,7 @@ function cardMarkup(card) {
         : `<span class="card-hp" title="Health">${escapeHTML(card.health || "–")} <small>HP</small></span>`}</header>
     <div class="card-window">${artMarkup(card)}</div>
     <div class="card-body">
+      <p class="card-rarity">${rarity}</p>
       ${item ? `<div class="card-skill item-effect"><div><strong>${effect?.name ?? "Choose effect"}</strong><span>One use</span></div><p>${effect?.text ?? ""}</p></div>` : `
       <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
       ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
@@ -381,7 +383,7 @@ async function handleDeck(button) {
   if (action === "edit") {
     const card = library.cards.find((item) => item.id === id);
     if (!card) return;
-    replaceFile({ ...blankCard(), ...card });
+    replaceFile({ ...blankCard(), ...card, rarity: rarityOf(card) });
     location.hash = "studio";
     return;
   }
@@ -446,6 +448,7 @@ function mountStudio() {
   form.elements.openRouterModel.placeholder = OPENROUTER_DEFAULT_MODEL;
   form.elements.faction.append(new Option("Choose element", ""));
   for (const [id, faction] of Object.entries(FACTIONS)) form.elements.faction.append(new Option(faction.name, id));
+  for (const [id, rarity] of Object.entries(RARITIES)) form.elements.rarity.append(new Option(rarity.name, id));
   for (const [id, ability] of Object.entries(ABILITIES)) form.elements.ability.append(new Option(ability.name, id));
   for (const [id, effect] of Object.entries(ITEM_EFFECTS)) form.elements.itemEffect.append(new Option(effect.name, id));
   for (const field of studioFields) {
@@ -495,7 +498,12 @@ function updateStudio() {
   form.elements.health.disabled = item;
   document.querySelector("#card-cost-label").textContent = item ? "Play cost" : "Deploy cost";
   const itemEffect = ITEM_EFFECTS[file.itemEffect];
-  document.querySelector("#item-effect-help").textContent = itemEffect?.text ?? "";
+  const tier = RARITIES[file.rarity];
+  document.querySelector("#rarity-help").textContent = item
+    ? `Minimum ${tier.minPulse} Pulse. Some effects require a higher tier.`
+    : `Minimum ${tier.minPulse} Pulse · +${tier.bonus} unit stat budget`;
+  document.querySelector("#item-effect-help").textContent = itemEffect
+    ? `${itemEffect.text} Requires ${RARITIES[itemEffect.rarity].name} or higher.` : "";
   form.elements.shareArt.disabled = !file.art || artLoading;
   form.elements.shareArt.checked = file.shareArt;
   const save = document.querySelector("#save-card");
@@ -516,10 +524,12 @@ function updateStudio() {
   }
   document.querySelector("#reroll-flavor").disabled = file.locks.includes("flavor");
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
-  const available = statBudget(Number(file.cost) || 0);
+  const available = statBudget(Number(file.cost) || 0, file.rarity);
+  const minPulse = minimumPulse(file);
   const budget = document.querySelector("#budget");
-  budget.textContent = item ? `Minimum play cost · ${itemEffect?.cost ?? "–"} Pulse` : `Stat budget ${spent} / ${available}`;
-  budget.classList.toggle("over-budget", item ? file.cost < itemEffect?.cost : spent > available);
+  budget.textContent = item ? `Minimum play cost · ${minPulse} Pulse` : `Stat budget ${spent} / ${available} · Minimum ${minPulse} Pulse`;
+  budget.classList.toggle("over-budget", file.cost < minPulse ||
+    (item ? !itemEffectFits(file.itemEffect, file.rarity) : spent > available));
   document.querySelector("#form-status").textContent = formMessage || storageWarning;
 }
 
@@ -606,12 +616,13 @@ function draftBrief(mode) {
   const issue = lockedCardIssue(locked, file.kind);
   if (issue) throw new Error(issue);
   const current = mode ? {
+    rarity: file.rarity, itemEffect: isItem(file) ? file.itemEffect : undefined,
     cost: file.cost, attack: isItem(file) ? undefined : file.attack, health: isItem(file) ? undefined : file.health,
     flavor: file.flavor.trim(),
     active1: isItem(file) ? undefined : readAttack(file.active1),
     active2: isItem(file) ? undefined : readAttack(file.active2),
   } : undefined;
-  return { name: file.name.trim(), character: file.character.trim(), faction: file.faction, concept: file.concept.trim(),
+  return { name: file.name.trim(), character: file.character.trim(), faction: file.faction, rarity: file.rarity, concept: file.concept.trim(),
     locked, kind: file.kind, mode, current };
 }
 
@@ -648,8 +659,9 @@ async function autoFill(mode) {
     updateStudio();
     return;
   }
-  if (!mode && !brief.name && !brief.character && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
-    setDraftMessage(mode, "Add a character, card name, element, or concept, or choose to include artwork.");
+  if (!mode && !brief.name && !brief.character && !brief.faction && brief.rarity === "common" &&
+      !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
+    setDraftMessage(mode, "Add a character, name, element, rarity, or concept, or choose to include artwork.");
     updateStudio();
     return;
   }

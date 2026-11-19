@@ -216,6 +216,7 @@ summary { cursor: pointer; font-weight: 800; }
 }
 .card-top { display: flex; align-items: start; justify-content: space-between; gap: .32rem; padding: .15rem .24rem .35rem; }
 .card-element { display: block; color: #394c58; font-size: .62rem; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; }
+.card-rarity { margin: 0; color: #394c58; font-size: .61rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
 .card-top h3 { overflow-wrap: anywhere; font-size: 1.03rem; line-height: 1.14; letter-spacing: -.025em; }
 .card-hp { flex-shrink: 0; padding: .15rem .32rem; white-space: nowrap; font-size: .93rem; font-weight: 900; background: #28394c; color: #f6fafa; border-radius: .32rem; }
 .card-hp small { font-size: .56rem; font-weight: 800; }

@@ -40,6 +40,8 @@
         <div class="studio-grid identity-fields">
           <div class="card-field"><label for="card-name">Card name</label><input id="card-name" name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></div>
           <div class="card-field"><label for="card-faction">Element</label><select id="card-faction" name="faction"></select></div>
+          <div class="card-field wide"><label for="card-rarity">Rarity</label><select id="card-rarity" name="rarity" aria-describedby="rarity-help"></select>
+            <p class="field-help" id="rarity-help"></p></div>
           <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
             <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
           <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>

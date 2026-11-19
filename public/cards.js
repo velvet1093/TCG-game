@@ -22,17 +22,24 @@ export const ABILITIES = {
   ping: { name: "Spark", text: "On deploy, deal 1 damage to the opposing unit in this lane.", weight: 1 },
 };
 
+export const RARITIES = {
+  common: { name: "Common", minPulse: 1, bonus: 0 },
+  uncommon: { name: "Uncommon", minPulse: 2, bonus: 1 },
+  rare: { name: "Rare", minPulse: 3, bonus: 2 },
+  legendary: { name: "Legendary", minPulse: 4, bonus: 3 },
+};
+
 export const ITEM_EFFECTS = {
-  draw: { name: "Draw", target: "self", cost: 1, amount: 1, text: "Draw 1 card from your deck." },
-  "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, amount: 3, text: "Restore 3 HP to one injured allied unit." },
-  "damage-enemy": { name: "Blast Unit", target: "enemy", cost: 2, amount: 2, text: "Deal 2 damage to one rival unit." },
-  "heal-core": { name: "Restore Core", target: "self", cost: 2, amount: 3, text: "Restore 3 health to your Core." },
-  "damage-core": { name: "Sabotage Core", target: "rival", cost: 3, amount: 2, text: "Deal 2 damage to the rival Core." },
+  draw: { name: "Draw", target: "self", cost: 1, rarity: "common", amount: 1, text: "Draw 1 card from your deck." },
+  "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, rarity: "common", amount: 3, text: "Restore 3 HP to one injured allied unit." },
+  "damage-enemy": { name: "Blast Unit", target: "enemy", cost: 2, rarity: "uncommon", amount: 2, text: "Deal 2 damage to one rival unit." },
+  "heal-core": { name: "Restore Core", target: "self", cost: 2, rarity: "uncommon", amount: 3, text: "Restore 3 health to your Core." },
+  "damage-core": { name: "Sabotage Core", target: "rival", cost: 3, rarity: "rare", amount: 2, text: "Deal 2 damage to the rival Core." },
 };
 
 export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
-export const CARD_FIELDS = ["name", "faction", "cost", "attack", "health", ...ATTACK_SLOTS, "ability", "flavor"];
-export const ITEM_FIELDS = ["name", "faction", "cost", "itemEffect", "flavor"];
+export const CARD_FIELDS = ["name", "faction", "rarity", "cost", "attack", "health", ...ATTACK_SLOTS, "ability", "flavor"];
+export const ITEM_FIELDS = ["name", "faction", "rarity", "cost", "itemEffect", "flavor"];
 export const UNIT_SKILL_FIELDS = [...ATTACK_SLOTS, "ability"];
 export const isItem = (card) => card?.kind === "item";
 export const cardFields = (kind) => kind === "item" ? ITEM_FIELDS : CARD_FIELDS;
@@ -43,13 +50,36 @@ export function draftFields(kind, mode) {
 }
 
 export const FIELD_LABELS = {
-  name: "Card name", faction: "Element", cost: "Pulse cost", attack: "Attack",
+  name: "Card name", faction: "Element", rarity: "Rarity", cost: "Pulse cost", attack: "Attack",
   health: "Health", active1: "Attack 1", active2: "Attack 2", ability: "Passive skill", flavor: "Flavor text",
   itemEffect: "Item effect",
 };
 const statRanges = { cost: [1, 6], attack: [1, 7], health: [1, 9] };
-export function statBudget(cost) {
-  return cost * 2 + 2;
+const validRarity = (rarity) => typeof rarity === "string" && Object.hasOwn(RARITIES, rarity);
+export function rarityOf(card) {
+  return card.rarity ?? (isItem(card) ? ITEM_EFFECTS[card.itemEffect]?.rarity : undefined) ?? "common";
+}
+
+export function minimumPulse(card) {
+  const rarity = rarityOf(card);
+  return Math.max(validRarity(rarity) ? RARITIES[rarity].minPulse : 1,
+    isItem(card) ? ITEM_EFFECTS[card.itemEffect]?.cost ?? 1 : 1);
+}
+
+export function itemEffectFits(itemEffect, rarity) {
+  return validRarity(rarity) && Object.hasOwn(ITEM_EFFECTS, itemEffect) &&
+    RARITIES[rarity].minPulse >= RARITIES[ITEM_EFFECTS[itemEffect].rarity].minPulse;
+}
+
+export function statBudget(cost, rarity = "common") {
+  return cost * 2 + 2 + (validRarity(rarity) ? RARITIES[rarity].bonus : 0);
+}
+
+function draftRarities(preferred, locked) {
+  const tier = RARITIES[preferred].minPulse;
+  const candidates = locked.rarity ? [locked.rarity] : Object.keys(RARITIES)
+    .sort((a, b) => Math.abs(RARITIES[a].minPulse - tier) - Math.abs(RARITIES[b].minPulse - tier));
+  return candidates.filter((rarity) => RARITIES[rarity].minPulse <= (locked.cost ?? statRanges.cost[1]));
 }
 
 function fieldIssue(field, value) {
@@ -57,6 +87,7 @@ function fieldIssue(field, value) {
     return "Enter a name of 1–44 characters.";
   }
   if (field === "faction" && (typeof value !== "string" || !Object.hasOwn(FACTIONS, value))) return "Choose an element.";
+  if (field === "rarity" && !validRarity(value)) return "Choose a rarity.";
   if (field === "ability" && (typeof value !== "string" || !Object.hasOwn(ABILITIES, value))) return "Choose a passive skill.";
   if (field === "itemEffect" && (typeof value !== "string" || !Object.hasOwn(ITEM_EFFECTS, value))) return "Choose an item effect.";
   if (ATTACK_SLOTS.includes(field)) return attackIssue(value);
@@ -71,15 +102,21 @@ function fieldIssue(field, value) {
 }
 
 export function cardIssues(card) {
-  const issues = cardFields(card.kind).map((field) => fieldIssue(field, card[field])).filter(Boolean);
+  const rarity = rarityOf(card);
+  const issues = cardFields(card.kind).map((field) => fieldIssue(field, field === "rarity" ? rarity : card[field])).filter(Boolean);
+  if (issues.length === 0 && card.cost < minimumPulse(card)) {
+    issues.push(`This card needs at least ${minimumPulse(card)} Pulse.`);
+  }
   if (isItem(card)) {
-    const effect = ITEM_EFFECTS[card.itemEffect];
-    if (!issues.length && card.cost < effect.cost) issues.push(`${effect.name} needs at least ${effect.cost} Pulse.`);
+    if (Object.hasOwn(ITEM_EFFECTS, card.itemEffect) && !itemEffectFits(card.itemEffect, rarity)) {
+      const effect = ITEM_EFFECTS[card.itemEffect];
+      issues.push(`${effect.name} requires ${RARITIES[effect.rarity].name} rarity or higher.`);
+    }
     return issues;
   }
   if (sameAttack(card.active1, card.active2)) issues.push("Give the two attacks different names.");
-  if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost)) {
-    issues.push("Reduce the stats or increase the Pulse cost to stay within budget.");
+  if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost, rarity)) {
+    issues.push("Reduce the stats, raise the rarity, or increase the Pulse cost to stay within budget.");
   }
   return issues;
 }
@@ -90,16 +127,25 @@ export function lockedCardIssue(locked, kind = "unit") {
     const issue = fieldIssue(field, locked[field]);
     if (issue) return `Check the locked ${FIELD_LABELS[field].toLowerCase()}. ${issue}`;
   }
+  const rarities = draftRarities(locked.rarity ?? "common", locked);
+  if (!rarities.length) return `${RARITIES[locked.rarity].name} needs at least ${RARITIES[locked.rarity].minPulse} Pulse. Unlock rarity or cost.`;
   if (kind === "item") {
     const effect = ITEM_EFFECTS[locked.itemEffect];
-    return effect && locked.cost < effect.cost ? `${effect.name} needs at least ${effect.cost} Pulse. Unlock its effect or cost.` : "";
+    if (!effect) return "";
+    if (locked.rarity && !itemEffectFits(locked.itemEffect, locked.rarity)) {
+      return `${effect.name} requires ${RARITIES[effect.rarity].name} rarity or higher. Unlock the effect or rarity.`;
+    }
+    if (locked.cost < minimumPulse({ kind, itemEffect: locked.itemEffect, rarity: locked.rarity })) {
+      return `${effect.name} needs at least ${minimumPulse({ kind, itemEffect: locked.itemEffect, rarity: locked.rarity })} Pulse. Unlock the effect or cost.`;
+    }
+    return "";
   }
   if (sameAttack(locked.active1, locked.active2)) {
     return "Unlock one of the attacks with the same name.";
   }
   const minimum = (locked.attack ?? 1) + (locked.health ?? 1) + (ABILITIES[locked.ability]?.weight ?? 0);
-  if (minimum > statBudget(locked.cost ?? 6)) {
-    return "The locked values exceed the stat budget. Unlock a stat, ability, or Pulse cost.";
+  if (rarities.every((rarity) => minimum > statBudget(locked.cost ?? 6, rarity))) {
+    return "The locked values exceed the stat budget. Unlock a stat, ability, rarity, or Pulse cost.";
   }
   return "";
 }
@@ -123,6 +169,12 @@ export function fitEffectDraft(draft, current, locked) {
   }));
 }
 
+function itemEffectChoices(itemEffect, locked) {
+  if (locked.itemEffect) return [itemEffect];
+  const fallback = { "heal-core": "heal-ally", "damage-core": "damage-enemy" };
+  return [...new Set([itemEffect, fallback[itemEffect], "draw"].filter(Boolean))];
+}
+
 export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {} } = {}) {
   const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
@@ -130,15 +182,16 @@ export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {
     const itemEffect = locked.itemEffect ?? draft.itemEffect;
     const invalid = fieldIssue("itemEffect", itemEffect);
     if (invalid) throw new Error(invalid);
-    const cost = Math.max(1, current.cost || 1);
-    if (ITEM_EFFECTS[itemEffect].cost <= cost) return { itemEffect };
-    if (locked.itemEffect) throw new Error(`Raise the play cost or unlock the item effect.`);
-    return { itemEffect: itemEffect === "heal-core" ? "heal-ally" : cost >= 2 ? "damage-enemy" : "draw" };
+    const rarity = rarityOf({ ...current, kind });
+    const compatible = itemEffectChoices(itemEffect, locked).find((effect) =>
+      itemEffectFits(effect, rarity) && minimumPulse({ kind, rarity, itemEffect: effect }) <= (current.cost || 1));
+    if (!compatible) throw new Error("Check the item's rarity and play cost, or unlock the item effect.");
+    return { itemEffect: compatible };
   }
   const skills = fitUnitSkills(draft, locked);
   const invalid = UNIT_SKILL_FIELDS.map((field) => fieldIssue(field, skills[field])).find(Boolean);
   if (invalid) throw new Error(invalid);
-  const remaining = statBudget(current.cost) - current.attack - current.health;
+  const remaining = statBudget(current.cost, rarityOf(current)) - current.attack - current.health;
   if (!Object.hasOwn(locked, "ability") && ABILITIES[skills.ability].weight > remaining) {
     const alternatives = { guard: "heal", haste: "ping", draw: "heal" };
     skills.ability = remaining >= 1 ? alternatives[skills.ability] ?? "basic" : "basic";
@@ -146,24 +199,29 @@ export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {
   return skills;
 }
 
-// Fit the proposed card around the locks. Prefer the proposed ability, then
-// the proposed cost. Trim unlocked stats before raising an unlocked cost.
+// Keep the proposed ability and rarity when possible. Trim unlocked stats
+// before raising an unlocked cost.
 export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
   const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
   const card = Object.fromEntries(cardFields(kind).map((key) => [key, locked[key] ?? draft[key]]));
+  if (kind === "item") card.kind = "item";
+  card.rarity = rarityOf(card);
+  const invalidRarity = fieldIssue("rarity", card.rarity);
+  if (invalidRarity) throw new Error(invalidRarity);
+  const rarities = draftRarities(card.rarity, locked);
   if (kind === "item") {
-    card.kind = "item";
-    const effect = ITEM_EFFECTS[card.itemEffect];
-    if (!Object.hasOwn(locked, "cost") && effect && Number.isInteger(card.cost)) {
-      card.cost = Math.min(6, Math.max(effect.cost, card.cost));
-    }
-    if (!Object.hasOwn(locked, "itemEffect") && effect && effect.cost > card.cost) {
-      card.itemEffect = fitAbilityDraft(card, { kind, current: card }).itemEffect;
-    }
-    const invalid = cardIssues(card)[0];
+    const invalid = fieldIssue("itemEffect", card.itemEffect);
     if (invalid) throw new Error(invalid);
-    return card;
+    for (const itemEffect of itemEffectChoices(card.itemEffect, locked)) {
+      for (const rarity of rarities) {
+        if (!itemEffectFits(itemEffect, rarity)) continue;
+        const fitted = { ...card, rarity, itemEffect };
+        fitted.cost = locked.cost ?? Math.min(6, Math.max(minimumPulse(fitted), card.cost));
+        if (!cardIssues(fitted).length) return fitted;
+      }
+    }
+    throw new Error(cardIssues(card)[0] || "Couldn’t generate a valid item.");
   }
   Object.assign(card, fitUnitSkills(card, locked));
   for (const [key, [min, max]] of Object.entries(statRanges)) {
@@ -175,13 +233,16 @@ export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
   const costs = Object.hasOwn(locked, "cost") ? [locked.cost] : [1, 2, 3, 4, 5, 6].filter((cost) => cost >= card.cost);
   for (const ability of abilities) {
     if (!Object.hasOwn(ABILITIES, ability)) continue;
-    for (const cost of costs) {
-      const room = statBudget(cost) - ABILITIES[ability].weight;
-      if (room < minAttack + minHealth) continue;
-      const attack = Math.min(card.attack, room - minHealth);
-      const health = Math.min(card.health, room - attack);
-      const fitted = { ...card, cost, attack, health, ability };
-      if (cardIssues(fitted).length === 0) return fitted;
+    for (const rarity of rarities) {
+      for (const cost of costs) {
+        if (cost < RARITIES[rarity].minPulse) continue;
+        const room = statBudget(cost, rarity) - ABILITIES[ability].weight;
+        if (room < minAttack + minHealth) continue;
+        const attack = Math.min(card.attack, room - minHealth);
+        const health = Math.min(card.health, room - attack);
+        const fitted = { ...card, rarity, cost, attack, health, ability };
+        if (cardIssues(fitted).length === 0) return fitted;
+      }
     }
   }
   throw new Error(cardIssues(card)[0] || "Couldn’t generate a valid card.");
@@ -296,13 +357,16 @@ const movePatterns = {
   siphon: ["Toll", ["hit", "drain"]], sweep: ["Arc", ["hit", "splash"]],
 };
 
-export function templateDraft({ name = "", character = "", faction = "", concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
+export function templateDraft({ name = "", character = "", faction = "", rarity, concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
   const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
   if (mode === "effects") return fitEffectDraft({}, current, locked);
   const contextName = locked.name ?? (character || name);
   const theme = `${concept} ${contextName} ${locked.flavor ?? ""}`.toLowerCase();
   const conceptText = concept.toLowerCase();
+  const rarityHint = conceptText.match(/\b(uncommon|common|rare|legendary|mythic|boss)\b/)?.[1];
+  const chosenRarity = locked.rarity ?? (rarityHint === "mythic" || rarityHint === "boss" ? "legendary" : rarityHint)
+    ?? (validRarity(rarity) ? rarity : undefined);
   const fromConcept = themes.find(([, pattern]) => pattern.test(conceptText))?.[0];
   const fromTheme = themes.find(([, pattern]) => pattern.test(theme))?.[0];
   const chosenElement = locked.faction ?? fromConcept ?? (Object.hasOwn(FACTIONS, faction) ? faction : fromTheme);
@@ -314,7 +378,7 @@ export function templateDraft({ name = "", character = "", faction = "", concept
     if (mode === "abilities") return fitAbilityDraft({ itemEffect }, { kind, locked, current });
     const card = fitDraft({
       name: itemName, faction: chosenElement ?? itemElement,
-      cost: ITEM_EFFECTS[itemEffect].cost, itemEffect, flavor: "",
+      rarity: chosenRarity, cost: ITEM_EFFECTS[itemEffect].cost, itemEffect, flavor: "",
     }, locked, kind);
     if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);
     return card;
@@ -338,11 +402,13 @@ export function templateDraft({ name = "", character = "", faction = "", concept
     active2: pattern ? { name: `${motif} ${pattern[0]}`, concept: "", effects: pattern[1] } : emptyAttack(),
   };
   if (mode === "abilities") return fitAbilityDraft(skills, { kind, locked, current });
-  const cost = locked.cost ?? (/legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
-  const stats = statBudget(cost) - ABILITIES[ability].weight;
+  const tier = draftRarities(chosenRarity ?? "common", locked)[0];
+  const cost = locked.cost ?? Math.max(RARITIES[tier].minPulse,
+    /legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
+  const stats = statBudget(cost, tier) - ABILITIES[ability].weight;
   const attack = Math.min(7, Math.max(1, Math.floor(stats / 2) + (ability === "haste" ? 1 : ability === "guard" ? -1 : 0)));
   const card = fitDraft({
-    name: character || preset.name, faction: selected, cost, attack, health: stats - attack,
+    name: character || preset.name, faction: selected, rarity: tier, cost, attack, health: stats - attack,
     ...skills, flavor: "",
   }, locked);
   if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);

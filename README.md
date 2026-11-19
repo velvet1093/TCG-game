@@ -26,12 +26,25 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 
 1. Open **Card studio** and pick **Unit** or **Item** under **Card type**. Add an element, a name, a concept, or your artwork.
 2. Tap **Lock** next to any field you want to keep. Quick fill and AI auto-fill use locked values as context and draft around them. Tap **Locked** to unlock a field. If locked stats exceed the Pulse budget, adjust or unlock one of them.
-3. Enter the fields yourself, use **Quick fill** for a draft, or use **AI auto-fill** with the configuration below. Use **Auto-fill abilities** or **Auto-fill item effect** to draft just the unlocked ability fields at the current Pulse cost. These controls use built-in suggestions when no AI key is configured. On a phone, tap **Preview** to see the complete card face.
+3. Enter the fields yourself, use **Quick fill** for a draft, or use **AI auto-fill** with the configuration below. Use **Auto-fill abilities** or **Auto-fill item effect** to draft just the unlocked ability fields at the current rarity and Pulse cost. These controls use built-in suggestions when no AI key is configured. On a phone, tap **Preview** to see the complete card face.
 4. In **Deck**, open **Active deck** and remove a card to free a slot. Add your new unit from the collection and start a **New duel**.
 
 In a unit’s attack slot, enter any name and an optional move concept. Choose effects manually or use **Auto-fill effects** to suggest the rules for your move without editing its name or concept. The suggested effects use the game’s supported mechanics, including lane hits, adjacent damage, Core drain, self-heal, stun, and draw. Clear any optional slot with **Clear attack**.
 
 The collection, compressed artwork, and deck are saved in the current browser. Edits to a card apply the next time you start a duel. Clearing site data or switching browser profiles affects access to those saved cards.
+
+### Rarity and balance
+
+| Rarity | Minimum Pulse | Extra unit stat points |
+| --- | ---: | ---: |
+| Common | 1 | 0 |
+| Uncommon | 2 | 1 |
+| Rare | 3 | 2 |
+| Legendary | 4 | 3 |
+
+The unit stat budget is twice the deploy cost plus two, plus the rarity bonus. Item effects use a minimum tier. Draw and Mend Unit start at Common, Blast Unit and Restore Core at Uncommon, and Sabotage Core at Rare.
+
+Quick fill and AI auto-fill suggest a tier and validate it with the rest of the card. Lock **Rarity** to have either drafter build around your choice. Older cards get Common for units and the effect's minimum rarity for items. Rarity is used only for card balance.
 
 ## AI auto-fill with OpenRouter
 

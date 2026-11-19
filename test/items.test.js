@@ -79,6 +79,6 @@ test("item drafts fit the effect price and skill-only drafts preserve scope and 
   assert.equal(abilities.active1.name, "Strike");
   assert.deepEqual(abilities.active2.effects, ["heavy"]);
   assert.equal(abilities.ability, "haste");
-  assert.deepEqual(fitAbilityDraft({ itemEffect: "damage-core" }, { kind: "item", current: { cost: 2 } }),
+  assert.deepEqual(fitAbilityDraft({ itemEffect: "damage-core" }, { kind: "item", current: { cost: 2, rarity: "uncommon" } }),
     { itemEffect: "damage-enemy" });
 });

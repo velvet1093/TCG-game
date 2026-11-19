@@ -38,7 +38,7 @@ test("the server requests structured text with optional art and validates return
   const reply = await post(url, { name: "Test Card", faction: "tide", concept: "Water mage" });
   assert.equal(reply.status, 200);
   assert.deepEqual((await reply.json()).draft, {
-    name: "Test Card", faction: "tide", cost: 2, attack: 3, health: 1, active1: emptyAttack(), active2: emptyAttack(), ability: "draw", flavor: "Moonfall.",
+    name: "Test Card", faction: "tide", rarity: "common", cost: 2, attack: 3, health: 1, active1: emptyAttack(), active2: emptyAttack(), ability: "draw", flavor: "Moonfall.",
   });
   assert.equal(sent.text.format.strict, true);
   assert.equal(sent.store, false);
@@ -62,15 +62,16 @@ test("the local provider drafts items without unit fields", async (t) => {
     apiKey: "test",
     request: async (_, { body }) => {
       const sent = JSON.parse(body);
-      assert.deepEqual(sent.text.format.schema.required, ["name", "faction", "cost", "itemEffect", "flavor", "recognizedCharacter"]);
-      const draft = { name: "Flash Charge", faction: "ember", cost: 1, itemEffect: "damage-enemy", flavor: "One red fuse." };
+      assert.deepEqual(sent.text.format.schema.required, ["name", "faction", "rarity", "cost", "itemEffect", "flavor", "recognizedCharacter"]);
+      assert.equal(JSON.parse(sent.input[0].content[0].text).rarity, "rare");
+      const draft = { name: "Flash Charge", faction: "ember", rarity: "rare", cost: 1, itemEffect: "damage-enemy", flavor: "One red fuse." };
       return Response.json({ status: "completed", output: [{ content: [{ type: "output_text", text: JSON.stringify(draft) }] }] });
     },
   });
-  const response = await post(url, { kind: "item", concept: "damage a rival unit", locked: {} });
+  const response = await post(url, { kind: "item", rarity: "rare", concept: "damage a rival unit", locked: {} });
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).draft, {
-    kind: "item", name: "Flash Charge", faction: "ember", cost: 2, itemEffect: "damage-enemy", flavor: "One red fuse.",
+    kind: "item", name: "Flash Charge", faction: "ember", rarity: "rare", cost: 3, itemEffect: "damage-enemy", flavor: "One red fuse.",
   });
 });
 
