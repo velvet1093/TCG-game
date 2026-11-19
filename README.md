@@ -16,9 +16,9 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 
 - Reduce the rival's 20-health Core to zero. Bring 15 cards with up to three copies of each unit.
 - Both players start with four cards, including a card they can afford if their deck contains one. At the start of your turn, draw once and refill Pulse. The first player skips the opening draw. Pulse capacity starts at two, growing by one per round to six.
-- Spend Pulse to play units in empty lanes. Tap a ready unit to choose one of its active skills or shift it into an open neighboring lane. Paid skills spend Pulse from the same pool as deployment. Units trade damage when they fight and hit the opposing Core when no unit stands in the way.
+- Spend Pulse to play units in empty lanes. Tap a ready unit to choose one of its named attacks or shift it into an open neighboring lane. The attack’s effects set its Pulse cost. Units trade damage on a lane hit and hit the opposing Core when the lane is open.
 - Striking in two distinct lanes in one turn gives one bonus Pulse. Starting a turn with an empty deck costs one Core health.
-- Units can have up to two different active skills and one automatic passive. Attack, Health, and the passive use a shared stat budget based on deploy cost. Legacy cards keep their existing passive and receive one zero-Pulse Strike.
+- Units can have up to two custom-named attacks and one automatic passive. Each attack can combine up to two combat effects. Attack, Health, and the passive use a shared stat budget based on deploy cost. New cards start with empty attack slots. Saved cards with an explicit older attack keep that attack and its mechanics.
 - Items use the same deck and Pulse pool as units. On your turn, select an item from your hand, then tap a highlighted target or **Play item**. Once its effect resolves, it goes to the discard pile. Item effects can draw one card, heal an allied unit, damage a rival unit, restore your Core, or damage the rival Core.
 - The collection is filterable by element. Ember, Tide, Grove, Veil, Storm, Frost, Stone, Dawn, and Alloy have their own frames and drafting themes.
 
@@ -28,6 +28,8 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 2. Tap **Lock** next to any field you want to keep. Quick fill and AI auto-fill use locked values as context and draft around them. Tap **Locked** to unlock a field. If locked stats exceed the Pulse budget, adjust or unlock one of them.
 3. Enter the fields yourself, use **Quick fill** for a draft, or use **AI auto-fill** with the configuration below. Use **Auto-fill abilities** or **Auto-fill item effect** to draft just the unlocked ability fields at the current Pulse cost. These controls use built-in suggestions when no AI key is configured. On a phone, tap **Preview** to see the complete card face.
 4. In **Deck**, open **Active deck** and remove a card to free a slot. Add your new unit from the collection and start a **New duel**.
+
+In a unit’s attack slot, enter any name and an optional move concept. Choose effects manually or use **Auto-fill effects** to suggest the rules for your move without editing its name or concept. The suggested effects use the game’s supported mechanics, including lane hits, adjacent damage, Core drain, self-heal, stun, and draw. Clear any optional slot with **Clear attack**.
 
 The collection, compressed artwork, and deck are saved in the current browser. Edits to a card apply the next time you start a duel. Clearing site data or switching browser profiles affects access to those saved cards.
 
@@ -47,7 +49,7 @@ node --env-file=.env server.js
 
 The server uses the OpenAI Responses API with structured outputs. The default model is `gpt-4.1-mini`. Set `OPENAI_MODEL` to override it with a compatible vision and structured-output model. Keep the key server-side. The server binds to loopback by default and is intended for local use. Add authentication and request quotas before exposing a keyed server publicly.
 
-Both providers receive the name, faction, brief, and locked values you enter. They receive artwork only when you check the artwork option. You can review and edit the draft before adding it to your collection. Quick fill runs in the browser and is available without a key.
+Use **Character name** to supply the character’s identity. Add their series or version to the concept if useful. AI drafts report the identity they used and request clarification in the editor copy when artwork recognition is uncertain. Both providers receive the card details, concept, and locked values you enter. They receive artwork only when you check the artwork option. Quick fill runs in the browser and is available without a key.
 
 ## Verification
 

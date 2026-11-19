@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { makeServer } from "../server.js";
+import { emptyAttack } from "../public/attacks.js";
 
 async function boot(t, options) {
   const server = makeServer(options).listen(0, "127.0.0.1");
@@ -37,7 +38,7 @@ test("the server requests structured text with optional art and validates return
   const reply = await post(url, { name: "Test Card", faction: "tide", concept: "Water mage" });
   assert.equal(reply.status, 200);
   assert.deepEqual((await reply.json()).draft, {
-    name: "Test Card", faction: "tide", cost: 2, attack: 3, health: 1, active1: "strike", active2: "none", ability: "draw", flavor: "Moonfall.",
+    name: "Test Card", faction: "tide", cost: 2, attack: 3, health: 1, active1: emptyAttack(), active2: emptyAttack(), ability: "draw", flavor: "Moonfall.",
   });
   assert.equal(sent.text.format.strict, true);
   assert.equal(sent.store, false);
@@ -61,7 +62,7 @@ test("the local provider drafts items without unit fields", async (t) => {
     apiKey: "test",
     request: async (_, { body }) => {
       const sent = JSON.parse(body);
-      assert.deepEqual(sent.text.format.schema.required, ["name", "faction", "cost", "itemEffect", "flavor"]);
+      assert.deepEqual(sent.text.format.schema.required, ["name", "faction", "cost", "itemEffect", "flavor", "recognizedCharacter"]);
       const draft = { name: "Flash Charge", faction: "ember", cost: 1, itemEffect: "damage-enemy", flavor: "One red fuse." };
       return Response.json({ status: "completed", output: [{ content: [{ type: "output_text", text: JSON.stringify(draft) }] }] });
     },

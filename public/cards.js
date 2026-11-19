@@ -1,4 +1,5 @@
 import { draftFlavor } from "./lore.js";
+import { ATTACK_SLOTS, attackIssue, emptyAttack, fitAttack, readAttack, resolveAttackEffects, sameAttack } from "./attacks.js";
 
 export const FACTIONS = {
   ember: { name: "Ember", icon: "✦", color: "#fc896b" },
@@ -21,15 +22,6 @@ export const ABILITIES = {
   ping: { name: "Spark", text: "On deploy, deal 1 damage to the opposing unit in this lane.", weight: 1 },
 };
 
-export const ACTIVE_SKILLS = {
-  none: { name: "None", text: "Empty skill slot." },
-  strike: { name: "Strike", pulse: 0, bonus: 0, text: "Strike across this lane." },
-  lunge: { name: "Lunge", pulse: 1, bonus: 2, text: "Strike with +2 damage." },
-  sweep: { name: "Sweep", pulse: 1, bonus: 0, text: "Strike and deal 1 damage to each adjacent rival unit." },
-  siphon: { name: "Siphon", pulse: 1, bonus: 0, text: "Strike. If it deals damage, restore 2 Core health." },
-  recover: { name: "Recover", pulse: 1, bonus: 0, text: "Restore 3 health to this injured unit." },
-};
-
 export const ITEM_EFFECTS = {
   draw: { name: "Draw", target: "self", cost: 1, amount: 1, text: "Draw 1 card from your deck." },
   "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, amount: 3, text: "Restore 3 HP to one injured allied unit." },
@@ -39,25 +31,23 @@ export const ITEM_EFFECTS = {
 };
 
 export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
-export const CARD_FIELDS = ["name", "faction", "cost", "attack", "health", "active1", "active2", "ability", "flavor"];
+export const CARD_FIELDS = ["name", "faction", "cost", "attack", "health", ...ATTACK_SLOTS, "ability", "flavor"];
 export const ITEM_FIELDS = ["name", "faction", "cost", "itemEffect", "flavor"];
-export const UNIT_SKILL_FIELDS = ["active1", "active2", "ability"];
+export const UNIT_SKILL_FIELDS = [...ATTACK_SLOTS, "ability"];
 export const isItem = (card) => card?.kind === "item";
 export const cardFields = (kind) => kind === "item" ? ITEM_FIELDS : CARD_FIELDS;
 export const abilityFields = (kind) => kind === "item" ? ["itemEffect"] : UNIT_SKILL_FIELDS;
+export function draftFields(kind, mode) {
+  if (mode === "effects") return ATTACK_SLOTS;
+  return mode === "abilities" ? abilityFields(kind) : cardFields(kind);
+}
 
 export const FIELD_LABELS = {
   name: "Card name", faction: "Element", cost: "Pulse cost", attack: "Attack",
-  health: "Health", active1: "Active skill 1", active2: "Active skill 2", ability: "Passive skill", flavor: "Flavor text",
+  health: "Health", active1: "Attack 1", active2: "Attack 2", ability: "Passive skill", flavor: "Flavor text",
   itemEffect: "Item effect",
 };
 const statRanges = { cost: [1, 6], attack: [1, 7], health: [1, 9] };
-const skillDefaults = { active1: "strike", active2: "none" };
-
-export function activeSkills(card) {
-  return [card.active1 ?? skillDefaults.active1, card.active2 ?? skillDefaults.active2].filter((id) => id !== "none");
-}
-
 export function statBudget(cost) {
   return cost * 2 + 2;
 }
@@ -69,9 +59,7 @@ function fieldIssue(field, value) {
   if (field === "faction" && (typeof value !== "string" || !Object.hasOwn(FACTIONS, value))) return "Choose an element.";
   if (field === "ability" && (typeof value !== "string" || !Object.hasOwn(ABILITIES, value))) return "Choose a passive skill.";
   if (field === "itemEffect" && (typeof value !== "string" || !Object.hasOwn(ITEM_EFFECTS, value))) return "Choose an item effect.";
-  if (Object.hasOwn(skillDefaults, field) && (typeof value !== "string" || !Object.hasOwn(ACTIVE_SKILLS, value))) {
-    return "Choose an active skill or leave the slot empty.";
-  }
+  if (ATTACK_SLOTS.includes(field)) return attackIssue(value);
   if (field === "flavor" && (typeof value !== "string" || value.length > 140)) {
     return "Keep flavor text within 140 characters.";
   }
@@ -83,13 +71,13 @@ function fieldIssue(field, value) {
 }
 
 export function cardIssues(card) {
-  const issues = cardFields(card.kind).map((field) => fieldIssue(field, card[field] ?? skillDefaults[field])).filter(Boolean);
+  const issues = cardFields(card.kind).map((field) => fieldIssue(field, card[field])).filter(Boolean);
   if (isItem(card)) {
     const effect = ITEM_EFFECTS[card.itemEffect];
     if (!issues.length && card.cost < effect.cost) issues.push(`${effect.name} needs at least ${effect.cost} Pulse.`);
     return issues;
   }
-  if (card.active1 && card.active1 !== "none" && card.active1 === card.active2) issues.push("Choose two different active skills.");
+  if (sameAttack(card.active1, card.active2)) issues.push("Give the two attacks different names.");
   if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost)) {
     issues.push("Reduce the stats or increase the Pulse cost to stay within budget.");
   }
@@ -106,8 +94,8 @@ export function lockedCardIssue(locked, kind = "unit") {
     const effect = ITEM_EFFECTS[locked.itemEffect];
     return effect && locked.cost < effect.cost ? `${effect.name} needs at least ${effect.cost} Pulse. Unlock its effect or cost.` : "";
   }
-  if (locked.active1 && locked.active1 !== "none" && locked.active1 === locked.active2) {
-    return "Unlock a duplicate active skill.";
+  if (sameAttack(locked.active1, locked.active2)) {
+    return "Unlock one of the attacks with the same name.";
   }
   const minimum = (locked.attack ?? 1) + (locked.health ?? 1) + (ABILITIES[locked.ability]?.weight ?? 0);
   if (minimum > statBudget(locked.cost ?? 6)) {
@@ -117,12 +105,22 @@ export function lockedCardIssue(locked, kind = "unit") {
 }
 
 function fitUnitSkills(card, locked) {
-  const skills = Object.fromEntries(UNIT_SKILL_FIELDS.map((key) => [key, locked[key] ?? card[key] ?? skillDefaults[key]]));
-  if (skills.active1 === skills.active2 && skills.active1 !== "none") {
-    const open = Object.hasOwn(locked, "active2") ? "active1" : "active2";
-    skills[open] = open === "active1" && skills.active2 !== "strike" ? "strike" : "none";
+  const skills = { ability: locked.ability ?? card.ability };
+  for (const field of ATTACK_SLOTS) {
+    skills[field] = Object.hasOwn(locked, field) ? readAttack(locked[field]) : fitAttack(card[field]);
+  }
+  if (sameAttack(skills.active1, skills.active2)) {
+    skills[Object.hasOwn(locked, "active2") ? "active1" : "active2"] = emptyAttack();
   }
   return skills;
+}
+
+export function fitEffectDraft(draft, current, locked) {
+  return Object.fromEntries(ATTACK_SLOTS.map((slot) => {
+    const move = readAttack(current?.[slot]);
+    return [slot, Object.hasOwn(locked, slot) ? move
+      : { ...move, effects: resolveAttackEffects(move, draft?.[slot]?.effects) }];
+  }));
 }
 
 export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {} } = {}) {
@@ -153,7 +151,7 @@ export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {
 export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
   const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
-  const card = Object.fromEntries(cardFields(kind).map((key) => [key, locked[key] ?? draft[key] ?? skillDefaults[key]]));
+  const card = Object.fromEntries(cardFields(kind).map((key) => [key, locked[key] ?? draft[key]]));
   if (kind === "item") {
     card.kind = "item";
     const effect = ITEM_EFFECTS[card.itemEffect];
@@ -189,8 +187,23 @@ export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
   throw new Error(cardIssues(card)[0] || "Couldn’t generate a valid card.");
 }
 
-const sample = (id, name, faction, cost, attack, health, ability, flavor, active2 = "none") =>
-  ({ id, name, faction, cost, attack, health, ability, flavor, active1: "strike", active2, art: "" });
+const sampleMoves = {
+  matchstick: ["Ember Bite"], cinder: ["Courier's Cut"], bell: ["Bronze Knuckles"],
+  sun: ["Sunline Cut", "High Noon Draw", ["heavy"]], emberglass: ["Furnace Fist"],
+  foam: ["Foam Dart"], ferryman: ["Oar Hook", "Moonpool Toll", ["hit", "drain"]], breakwater: ["Breakwater Blade"],
+  mist: ["Ribbon Slip"], tidevault: ["Undertow Jaws"], sprout: ["Twig Snap"], cedar: ["Cedar Staff"],
+  heron: ["Reed Beak"], ivy: ["Root Lash", "New Growth", ["mend"]], veilcat: ["Paper Claw"], mask: ["Mask Shard"],
+  silk: ["Silk Needle"], gate: ["Gate Sigil"], static: ["Static Jab", "Rail Arc", ["hit", "splash"]],
+  rime: ["Rime Dart", "Icebreaker Dive", ["heavy"]], basalt: ["Basalt Maul", "Repack Mortar", ["mend"]],
+  beacon: ["Beacon Ray", "Gather First Light", ["hit", "drain"]], copper: ["Copper Wrench", "Switchyard Arc", ["hit", "splash"]],
+};
+
+const sample = (id, name, faction, cost, attack, health, ability, flavor) => {
+  const [first, second, effects] = sampleMoves[id];
+  return { id, name, faction, cost, attack, health, ability, flavor, art: "",
+    active1: { name: first, concept: "", effects: ["hit"] },
+    active2: second ? { name: second, concept: "", effects } : emptyAttack() };
+};
 const item = (id, name, faction, itemEffect, flavor) =>
   ({ id, name, faction, kind: "item", cost: ITEM_EFFECTS[itemEffect].cost, itemEffect, flavor, art: "" });
 
@@ -198,26 +211,26 @@ export const STARTER_CARDS = [
   sample("matchstick", "Matchstick Familiar", "ember", 1, 1, 2, "ping", "A little blaze goes a long way."),
   sample("cinder", "Cinder Courier", "ember", 2, 2, 2, "haste", "By the time the lantern swings, she is gone."),
   sample("bell", "Bellforge Brawler", "ember", 3, 4, 4, "basic", "The bells remember every blow."),
-  sample("sun", "Sunspoke Duelist", "ember", 4, 5, 4, "ping", "One flash. Then the silence.", "lunge"),
+  sample("sun", "Sunspoke Duelist", "ember", 4, 5, 4, "ping", "One flash. Then the silence."),
   sample("emberglass", "Emberglass Oni", "ember", 5, 5, 5, "haste", "They heard it laugh through the furnace door."),
   sample("foam", "Foamglass Scout", "tide", 1, 1, 1, "draw", "Even the smallest ripple carries a message."),
-  sample("ferryman", "Moonpool Ferryman", "tide", 2, 2, 3, "heal", "The river grants passage to those who listen.", "siphon"),
+  sample("ferryman", "Moonpool Ferryman", "tide", 2, 2, 3, "heal", "The river grants passage to those who listen."),
   sample("breakwater", "Breakwater Ronin", "tide", 3, 2, 4, "guard", "He stays until every boat is home."),
   sample("mist", "Mistcoil Dancer", "tide", 4, 4, 4, "draw", "Watch the ribbon and miss the blade."),
   sample("tidevault", "Tidevault Leviathan", "tide", 6, 5, 7, "guard", "Its shadow darkens both shores."),
   sample("sprout", "Lantern Sprout", "grove", 1, 1, 3, "basic", "It holds the path until dawn."),
   sample("cedar", "Cedar Oathkeeper", "grove", 2, 1, 3, "guard", "The forest gives its word through her."),
   sample("heron", "Verdant Heron", "grove", 3, 3, 4, "heal", "Spring follows a single beat of its wings."),
-  sample("ivy", "Ivybound Colossus", "grove", 5, 3, 7, "guard", "The garden learned to walk.", "recover"),
+  sample("ivy", "Ivybound Colossus", "grove", 5, 3, 7, "guard", "The garden learned to walk."),
   sample("veilcat", "Paperveil Cat", "veil", 1, 1, 1, "haste", "It always takes the shorter shadow."),
   sample("mask", "Mask Archivist", "veil", 2, 1, 3, "draw", "Every mask has a story it refuses to tell."),
   sample("silk", "Silkstep Phantom", "veil", 3, 3, 3, "haste", "Midnight is only the start of her route."),
   sample("gate", "Keeper of the Violet Gate", "veil", 4, 3, 5, "guard", "On the far side, the stars look different."),
-  sample("static", "Static Runner", "storm", 2, 3, 1, "haste", "She reads the lightning by the gaps it leaves in the city lights.", "sweep"),
-  sample("rime", "Rimeglass Pilot", "frost", 3, 3, 3, "guard", "The runways are marked with bells. Snow can bury paint, but it can't bury a sound.", "lunge"),
-  sample("basalt", "Basalt Waykeeper", "stone", 3, 2, 4, "guard", "Every traveler leaves a pebble at the pass. By winter, the pile is taller than the gate.", "recover"),
-  sample("beacon", "Firstlight Keeper", "dawn", 3, 3, 4, "heal", "At sunrise they open the lighthouse shutters one at a time, starting with the smallest.", "siphon"),
-  sample("copper", "Copperline Mechanic", "alloy", 2, 2, 2, "draw", "She can hear a loose rivet from the other end of a moving train.", "sweep"),
+  sample("static", "Static Runner", "storm", 2, 3, 1, "haste", "She reads the lightning by the gaps it leaves in the city lights."),
+  sample("rime", "Rimeglass Pilot", "frost", 3, 3, 3, "guard", "The runways are marked with bells. Snow can bury paint, but it can't bury a sound."),
+  sample("basalt", "Basalt Waykeeper", "stone", 3, 2, 4, "guard", "Every traveler leaves a pebble at the pass. By winter, the pile is taller than the gate."),
+  sample("beacon", "Firstlight Keeper", "dawn", 3, 3, 4, "heal", "At sunrise they open the lighthouse shutters one at a time, starting with the smallest."),
+  sample("copper", "Copperline Mechanic", "alloy", 2, 2, 2, "draw", "She can hear a loose rivet from the other end of a moving train."),
   item("dispatch", "Harbor Dispatch", "tide", "draw", "The harbor master seals every letter twice. The first seal is for the rain."),
   item("patch", "Mossweave Patch", "grove", "heal-ally", "The dressings are cut from river moss at low tide and kept wet until needed."),
   item("flare", "Signal Flare", "ember", "damage-enemy", "One flare means clear the track. Two means someone already missed the first."),
@@ -274,10 +287,20 @@ const itemIdeas = [
   ["draw", "Harbor Dispatch", "tide", /draw|dispatch|letter|map|scout|find/],
 ];
 
-export function templateDraft({ name = "", faction = "", concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
+const moveMotifs = {
+  ember: "Cinder", tide: "Undertow", grove: "Briar", veil: "Phantom", storm: "Voltage",
+  frost: "Rime", stone: "Basalt", dawn: "Sunrise", alloy: "Copper",
+};
+const movePatterns = {
+  lunge: ["Breakthrough", ["heavy"]], recover: ["Reprieve", ["mend"]],
+  siphon: ["Toll", ["hit", "drain"]], sweep: ["Arc", ["hit", "splash"]],
+};
+
+export function templateDraft({ name = "", character = "", faction = "", concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
   const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
-  const contextName = locked.name ?? name;
+  if (mode === "effects") return fitEffectDraft({}, current, locked);
+  const contextName = locked.name ?? (character || name);
   const theme = `${concept} ${contextName} ${locked.flavor ?? ""}`.toLowerCase();
   const conceptText = concept.toLowerCase();
   const fromConcept = themes.find(([, pattern]) => pattern.test(conceptText))?.[0];
@@ -307,13 +330,19 @@ export function templateDraft({ name = "", faction = "", concept = "", locked = 
   ];
   const role = roles.find(([, , pattern]) => pattern.test(conceptText)) ?? roles.find(([, , pattern]) => pattern.test(theme));
   const ability = locked.ability ?? role?.[0] ?? preset.ability;
-  const skills = { ability, active1: "strike", active2: role?.[1] ?? preset.active2 };
+  const motif = moveMotifs[selected];
+  const pattern = movePatterns[role?.[1] ?? preset.active2];
+  const skills = {
+    ability,
+    active1: { name: `${motif} ${variant % 2 ? "Counter" : "Cut"}`, concept: "", effects: ["hit"] },
+    active2: pattern ? { name: `${motif} ${pattern[0]}`, concept: "", effects: pattern[1] } : emptyAttack(),
+  };
   if (mode === "abilities") return fitAbilityDraft(skills, { kind, locked, current });
   const cost = locked.cost ?? (/legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
   const stats = statBudget(cost) - ABILITIES[ability].weight;
   const attack = Math.min(7, Math.max(1, Math.floor(stats / 2) + (ability === "haste" ? 1 : ability === "guard" ? -1 : 0)));
   const card = fitDraft({
-    name: preset.name, faction: selected, cost, attack, health: stats - attack,
+    name: character || preset.name, faction: selected, cost, attack, health: stats - attack,
     ...skills, flavor: "",
   }, locked);
   if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);

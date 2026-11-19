@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "../public/ai-draft.js";
 
-const draft = { name: "Other name", faction: "tide", cost: 2, attack: 2, health: 2, active1: "strike", active2: "siphon", ability: "haste", flavor: "A storm follows." };
+const draft = { name: "Other name", faction: "tide", cost: 2, attack: 2, health: 2, active1: { name: "Wave Edge", concept: "", effects: ["hit"] }, active2: { name: "Undertow Toll", concept: "", effects: ["hit", "drain"] }, ability: "haste", flavor: "A storm follows." };
 const reply = () => Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(draft) } }] });
 
 test("OpenRouter gets a structured brief and the returned card keeps its field locks", async () => {
@@ -50,7 +50,7 @@ test("OpenRouter requests only ability fields for ability-only drafts", async ()
     apiKey: "sample-key",
     request: async (_, options) => {
       const sent = JSON.parse(options.body);
-      assert.deepEqual(sent.response_format.json_schema.schema.required, ["itemEffect"]);
+      assert.deepEqual(sent.response_format.json_schema.schema.required, ["itemEffect", "recognizedCharacter"]);
       assert.deepEqual(JSON.parse(sent.messages[1].content[0].text).current, { cost: 1 });
       return Response.json({ choices: [{ message: { content: '{"itemEffect":"heal-core","cost":6}' } }] });
     },

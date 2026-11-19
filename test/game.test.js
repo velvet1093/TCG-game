@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { STARTER_CARDS, STARTER_DECK, RIVAL_DECK, activeSkills, cardIssues, deckIssue, templateDraft } from "../public/cards.js";
+import { STARTER_CARDS, STARTER_DECK, RIVAL_DECK, cardIssues, deckIssue, templateDraft } from "../public/cards.js";
 import { act, createGame, playRival } from "../public/engine.js";
+import { activeAttacks, emptyAttack } from "../public/attacks.js";
 
 const start = () => createGame(STARTER_CARDS, STARTER_DECK, RIVAL_DECK, () => 0.999);
 const unit = (id, ready = true) => {
@@ -48,16 +49,19 @@ test("Quick fill drafts around fixed stats and identifies impossible locks", () 
   assert.throws(() => templateDraft({ locked: { name: "" } }), /locked card name/);
 });
 
-test("legacy cards keep Strike and drafts preserve up to two distinct skill slots", () => {
+test("blank cards have no hidden attack and old saved skills migrate explicitly", () => {
   const { active1, active2, ...legacy } = STARTER_CARDS[0];
   assert.deepEqual(cardIssues(legacy), []);
-  assert.deepEqual(activeSkills(legacy), ["strike"]);
-  assert.match(cardIssues({ ...legacy, active1, active2: active1 })[0], /different active skills/);
-  const draft = templateDraft({ concept: "storm rider", locked: { active2: "strike", ability: "draw" } });
-  assert.equal(draft.active2, "strike");
+  assert.deepEqual(activeAttacks(legacy), []);
+  const old = activeAttacks({ ...legacy, active1: "strike" })[0];
+  assert.deepEqual(old, { slot: "active1", name: "Strike", concept: "", effects: ["hit"] });
+  assert.match(cardIssues({ ...legacy, active1, active2: active1 })[0], /different names/);
+  const named = { name: "Thunder Spiral", concept: "A wide cut.", effects: ["hit", "splash"] };
+  const draft = templateDraft({ concept: "storm rider", locked: { active2: named, ability: "draw" } });
+  assert.deepEqual(draft.active2, named);
   assert.equal(draft.ability, "draw");
-  assert.deepEqual(activeSkills(draft), ["strike"]);
-  assert.throws(() => templateDraft({ locked: { active1: "strike", active2: "strike" } }), /duplicate active skill/);
+  assert.throws(() => templateDraft({ locked: { active1: named, active2: named } }), /same name/);
+  assert.deepEqual(activeAttacks({ active1: emptyAttack(), active2: emptyAttack() }), []);
 });
 
 test("Quick fill uses elements and concrete settings in varied flavor text", () => {
@@ -149,13 +153,13 @@ test("active skills use Pulse, enforce membership and consume a unit's action", 
   player.board[0] = unit("sun");
   assert.match(act(game, 0, { type: "skill", lane: 0, skill: "sweep" }), /isn’t on this card/);
   player.pulse = 0;
-  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "lunge" }), /more Pulse/);
+  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "active2" }), /more Pulse/);
   player.pulse = 2;
   rival.board[0] = unit("tidevault");
-  assert.equal(act(game, 0, { type: "skill", lane: 0, skill: "lunge" }), "");
+  assert.equal(act(game, 0, { type: "skill", lane: 0, skill: "active2" }), "");
   assert.equal(player.pulse, 1);
   assert.equal(rival.board[0].health, 1);
-  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "strike" }), /ready/);
+  assert.match(act(game, 0, { type: "skill", lane: 0, skill: "active1" }), /ready/);
 });
 
 test("Sweep hits adjacent rival units and Recover heals without counting toward a chain", () => {
@@ -165,10 +169,10 @@ test("Sweep hits adjacent rival units and Recover heals without counting toward 
   player.board[2] = { ...unit("ivy"), health: 3 };
   rival.board[0] = unit("foam");
   rival.board[2] = unit("cedar");
-  assert.equal(act(game, 0, { type: "skill", lane: 1, skill: "sweep" }), "");
+  assert.equal(act(game, 0, { type: "skill", lane: 1, skill: "active2" }), "");
   assert.equal(rival.board[0], null);
   assert.equal(rival.board[2].health, 2);
-  assert.equal(act(game, 0, { type: "skill", lane: 2, skill: "recover" }), "");
+  assert.equal(act(game, 0, { type: "skill", lane: 2, skill: "active2" }), "");
   assert.equal(player.board[2].health, 6);
   assert.equal(player.pulse, 0);
   assert.deepEqual(game.struck, [1]);

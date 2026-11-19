@@ -1,13 +1,15 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { FACTIONS, abilityFields, cardFields, lockedCardIssue } from "./public/cards.js";
+import { FACTIONS, draftFields, lockedCardIssue } from "./public/cards.js";
+import { readAttack } from "./public/attacks.js";
 import { draftInstructionsFor, draftSchemaFor, draftText, normalizeDraft } from "./public/ai-draft.js";
 
 const assets = {
   "/": ["index.html", "text/html"],
   "/app.js": ["app.js", "text/javascript"],
   "/ai-draft.js": ["ai-draft.js", "text/javascript"],
+  "/attacks.js": ["attacks.js", "text/javascript"],
   "/cards.js": ["cards.js", "text/javascript"],
   "/engine.js": ["engine.js", "text/javascript"],
   "/lore.js": ["lore.js", "text/javascript"],
@@ -34,16 +36,23 @@ async function readDraftRequest(req) {
   const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   const trim = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
   const name = trim(data?.name, 44);
+  const character = trim(data?.character, 80) || undefined;
   const concept = trim(data?.concept, 600);
   const faction = typeof data?.faction === "string" && Object.hasOwn(FACTIONS, data.faction) ? data.faction : "";
   const kind = data?.kind === "item" ? "item" : undefined;
-  const mode = data?.mode === "abilities" ? "abilities" : undefined;
-  const fields = mode ? abilityFields(kind) : cardFields(kind);
+  const mode = data?.mode === "abilities" ? "abilities" : data?.mode === "effects" && kind !== "item" ? "effects" : undefined;
+  const fields = draftFields(kind, mode);
+  const currentAttack = (value) => {
+    const move = readAttack(value);
+    return { name: trim(move.name, 44), concept: trim(move.concept, 160) };
+  };
   const current = mode ? {
     cost: Number.isInteger(data.current?.cost) ? data.current.cost : undefined,
     attack: kind !== "item" && Number.isInteger(data.current?.attack) ? data.current.attack : undefined,
     health: kind !== "item" && Number.isInteger(data.current?.health) ? data.current.health : undefined,
     flavor: trim(data.current?.flavor, 140),
+    active1: kind !== "item" ? currentAttack(data.current?.active1) : undefined,
+    active2: kind !== "item" ? currentAttack(data.current?.active2) : undefined,
   } : undefined;
   const art = typeof data?.art === "string" ? data.art : "";
   if (art && !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(art)) {
@@ -64,10 +73,10 @@ async function readDraftRequest(req) {
   if (issue) throw new Error(issue);
   const lockCount = Object.keys(locked).length;
   if (lockCount === fields.length) throw new Error("Unlock a field for auto-fill.");
-  if (!mode && !name && !concept && !faction && !art && !lockCount) {
+  if (!mode && !name && !character && !concept && !faction && !art && !lockCount) {
     throw new Error("Add a name, concept, faction, artwork, or locked field first.");
   }
-  return { name, concept, faction, art, locked, kind, mode, current };
+  return { name, character, concept, faction, art, locked, kind, mode, current };
 }
 
 async function requestDraft(input, { apiKey, model, request }) {

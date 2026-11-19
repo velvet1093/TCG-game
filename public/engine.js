@@ -1,4 +1,5 @@
-import { ACTIVE_SKILLS, ITEM_EFFECTS, LIMITS, activeSkills, deckIssue, isItem } from "./cards.js";
+import { ITEM_EFFECTS, LIMITS, deckIssue, isItem } from "./cards.js";
+import { activeAttacks, attackPulse } from "./attacks.js";
 
 const labels = ["You", "Rival"];
 const logLimit = 35;
@@ -53,7 +54,10 @@ function beginTurn(game, { opening = false } = {}) {
   side.pulse = side.capacity;
   game.struck = [];
   for (const unit of side.board) {
-    if (unit) unit.ready = true;
+    if (unit) {
+      unit.ready = !unit.stunned;
+      unit.stunned = false;
+    }
   }
   if (!opening && !side.deck.length) {
     side.core = Math.max(0, side.core - 1);
@@ -63,6 +67,33 @@ function beginTurn(game, { opening = false } = {}) {
     draw(side);
   }
   if (game.winner === null) log(game, `Round ${game.round} · ${game.turn === 0 ? "Your turn" : "Rival turn"}`);
+}
+
+function chosenAttack(unit, action) {
+  const moves = activeAttacks(unit.card);
+  return action.type === "strike" ? moves.find(({ effects }) => effects.length === 1 && effects[0] === "hit")
+    : moves.find(({ slot }) => slot === action.skill);
+}
+
+const hitsLane = (effects) => effects.includes("hit") || effects.includes("heavy");
+const attackPower = (unit, effects) => unit.card.attack + (effects.includes("heavy") ? 2 : 0);
+
+function readyAttackIssue(game, sideIndex, action) {
+  const { lane } = action;
+  const side = game.sides[sideIndex];
+  const rival = game.sides[1 - sideIndex];
+  const unit = side.board[lane];
+  if (!unit?.ready) return "That unit needs to ready.";
+  const move = chosenAttack(unit, action);
+  if (!move) return "That attack isn’t on this card.";
+  if (side.pulse < attackPulse(move)) return "You need more Pulse.";
+  const { effects } = move;
+  if (hitsLane(effects) ||
+      (effects.includes("splash") && (rival.board[lane - 1] || rival.board[lane + 1])) ||
+      (effects.includes("mend") && unit.health < unit.card.health) ||
+      (effects.includes("stun") && rival.board[lane] && !rival.board[lane].stunned) ||
+      (effects.includes("draw") && side.deck.length)) return "";
+  return "None of this attack’s effects can apply right now.";
 }
 
 function checkWinner(game) {
@@ -116,15 +147,7 @@ export function actionIssue(game, sideIndex, action) {
     if (card.cost > side.pulse) return "You need more Pulse.";
     return "";
   }
-  if (action.type === "strike" || action.type === "skill") {
-    const unit = side.board[action.lane];
-    if (!unit?.ready) return "That unit needs to ready.";
-    const id = action.type === "strike" ? "strike" : action.skill;
-    if (!activeSkills(unit.card).includes(id)) return "That skill isn’t on this card.";
-    if (side.pulse < ACTIVE_SKILLS[id].pulse) return "You need more Pulse.";
-    if (id === "recover" && unit.health >= unit.card.health) return "This unit is already at full health.";
-    return "";
-  }
+  if (action.type === "strike" || action.type === "skill") return readyAttackIssue(game, sideIndex, action);
   if (action.type === "shift") {
     if (!side.board[action.lane]?.ready) return "That unit needs to ready.";
     if (!Number.isInteger(action.to) || action.to < 0 || action.to >= LIMITS.lanes ||
@@ -132,6 +155,69 @@ export function actionIssue(game, sideIndex, action) {
     return side.board[action.to] ? "That lane is occupied." : "";
   }
   return "Unknown action.";
+}
+
+function playAttack(game, sideIndex, action) {
+  const { lane } = action;
+  const side = game.sides[sideIndex];
+  const rival = game.sides[1 - sideIndex];
+  const unit = side.board[lane];
+  const move = chosenAttack(unit, action);
+  const { effects, name } = move;
+  const target = rival.board[lane];
+  unit.ready = false;
+  side.pulse -= attackPulse(move);
+  let damage = 0;
+  if (hitsLane(effects)) {
+    damage = attackPower(unit, effects) - Number(target?.card.ability === "guard");
+    game.impact = { side: 1 - sideIndex, lane, amount: damage, core: !target };
+    if (target) {
+      const counter = target.card.attack - Number(unit.card.ability === "guard");
+      target.health -= damage;
+      unit.health -= counter;
+      log(game, `${unit.card.name} uses ${name} on ${target.card.name} for ${damage} (${counter} returned).`);
+      clearLane(game, side, lane);
+      clearLane(game, rival, lane);
+    } else {
+      rival.core = Math.max(0, rival.core - damage);
+      log(game, `${unit.card.name} uses ${name} on the Core for ${damage}.`);
+    }
+    if (!game.struck.includes(lane)) {
+      game.struck.push(lane);
+      if (game.struck.length === 2) {
+        side.pulse++;
+        log(game, "Chain bonus: +1 Pulse for striking in two lanes.");
+      }
+    }
+  }
+  if (effects.includes("splash")) {
+    for (const adjacent of [lane - 1, lane + 1]) {
+      const neighbor = rival.board[adjacent];
+      if (!neighbor) continue;
+      neighbor.health--;
+      log(game, `${name} deals 1 damage to ${neighbor.card.name}.`);
+      clearLane(game, rival, adjacent);
+    }
+  }
+  if (effects.includes("drain") && damage > 0) {
+    const restored = Math.min(2, LIMITS.core - side.core);
+    side.core += restored;
+    if (restored) log(game, `${name} restores ${restored} Core health.`);
+  }
+  if (effects.includes("mend") && side.board[lane] && unit.health < unit.card.health) {
+    const restored = Math.min(3, unit.card.health - unit.health);
+    unit.health += restored;
+    log(game, `${name} restores ${restored} HP to ${unit.card.name}.`);
+  }
+  if (effects.includes("stun") && rival.board[lane] && !rival.board[lane].stunned) {
+    target.stunned = true;
+    log(game, `${name} stuns ${target.card.name} for its next turn.`);
+  }
+  if (effects.includes("draw") && side.deck.length) {
+    draw(side);
+    log(game, `${unit.card.name} draws 1 card with ${name}.`);
+  }
+  checkWinner(game);
 }
 
 function playItem(game, sideIndex, { hand, lane }) {
@@ -214,58 +300,9 @@ export function act(game, sideIndex, action) {
       break;
     }
     case "strike":
-    case "skill": {
-      const unit = side.board[lane];
-      const target = opponent.board[lane];
-      const id = action.type === "strike" ? "strike" : action.skill;
-      const skill = ACTIVE_SKILLS[id];
-      unit.ready = false;
-      side.pulse -= skill.pulse;
-      if (id === "recover") {
-        const restored = Math.min(3, unit.card.health - unit.health);
-        unit.health += restored;
-        log(game, `${unit.card.name} uses Recover and restores ${restored} health.`);
-        break;
-      }
-      const power = unit.card.attack + skill.bonus;
-      const damage = power - Number(target?.card.ability === "guard");
-      const attackName = id === "strike" ? "strikes" : `uses ${skill.name} on`;
-      game.impact = { side: 1 - sideIndex, lane, amount: damage, core: !target };
-      if (target) {
-        const counter = target.card.attack - Number(unit.card.ability === "guard");
-        target.health -= damage;
-        unit.health -= counter;
-        log(game, `${unit.card.name} ${attackName} ${target.card.name} for ${damage} (${counter} returned).`);
-        clearLane(game, side, lane);
-        clearLane(game, opponent, lane);
-      } else {
-        opponent.core = Math.max(0, opponent.core - damage);
-        log(game, `${unit.card.name} ${attackName} the Core for ${damage}.`);
-      }
-      if (id === "siphon" && damage > 0) {
-        const restored = Math.min(2, LIMITS.core - side.core);
-        side.core += restored;
-        if (restored) log(game, `Siphon restores ${restored} Core health.`);
-      }
-      if (id === "sweep") {
-        for (const adjacent of [lane - 1, lane + 1]) {
-          const neighbor = opponent.board[adjacent];
-          if (!neighbor) continue;
-          neighbor.health--;
-          log(game, `Sweep deals 1 damage to ${neighbor.card.name}.`);
-          clearLane(game, opponent, adjacent);
-        }
-      }
-      if (!game.struck.includes(lane)) {
-        game.struck.push(lane);
-        if (game.struck.length === 2) {
-          side.pulse++;
-          log(game, "Chain bonus: +1 Pulse for striking in two lanes.");
-        }
-      }
-      checkWinner(game);
+    case "skill":
+      playAttack(game, sideIndex, action);
       break;
-    }
   }
   return "";
 }
@@ -277,25 +314,28 @@ function rankBotActions(game) {
     const unit = side.board[lane];
     const target = opponent.board[lane];
     if (unit?.ready) {
-      for (const id of activeSkills(unit.card)) {
-        const action = { type: "skill", lane, skill: id };
+      for (const move of activeAttacks(unit.card)) {
+        const { slot, effects } = move;
+        const action = { type: "skill", lane, skill: slot };
         if (actionIssue(game, 1, action)) continue;
-        const skill = ACTIVE_SKILLS[id];
-        const power = unit.card.attack + skill.bonus;
+        const power = hitsLane(effects) ? attackPower(unit, effects) : 0;
         const damage = power - Number(target?.card.ability === "guard");
-        let score = opponent.core <= power ? 100 : 8 + power;
-        if (target) {
+        let score = 0;
+        if (power && !target) score = opponent.core <= power ? 100 : 8 + power;
+        if (power && target) {
           const kills = damage >= target.health;
           const survives = target.card.attack - Number(unit.card.ability === "guard") < unit.health;
           score = (kills ? 9 + target.card.cost : 1 + damage) - (survives ? 0 : 5 + unit.card.cost / 2);
         }
-        if (id === "recover") score = Math.min(3, unit.card.health - unit.health);
-        if (id === "siphon" && damage > 0) score += Math.min(2, LIMITS.core - side.core);
-        if (id === "sweep") {
+        if (effects.includes("mend")) score += Math.min(3, unit.card.health - unit.health);
+        if (effects.includes("drain") && damage > 0) score += Math.min(2, LIMITS.core - side.core);
+        if (effects.includes("stun") && target?.health > damage && !target.stunned) score += 2 + target.card.attack / 2;
+        if (effects.includes("draw") && side.deck.length) score += 3;
+        if (effects.includes("splash")) {
           score += [opponent.board[lane - 1], opponent.board[lane + 1]]
             .reduce((total, neighbor) => total + (neighbor?.health === 1 ? 4 : neighbor ? 1.5 : 0), 0);
         }
-        options.push({ score: score - skill.pulse * 0.8, action });
+        options.push({ score: score - attackPulse(move) * 0.8, action });
       }
       for (const to of [lane - 1, lane + 1]) {
         const action = { type: "shift", lane, to };

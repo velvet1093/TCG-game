@@ -35,13 +35,16 @@ const beats = {
   basic: ["The watch keeps a fresh cup by the door for the next shift.", "Old hands can tell who came through by what was left in the dust."],
 };
 
+const effectBeats = { heavy: "lunge", splash: "sweep", drain: "siphon", mend: "recover", draw: "draw" };
+
 export function draftFlavor(card, concept = "", variant = 0) {
   const cues = `${concept} ${card.name ?? ""}`;
   let seed = 0;
   for (const character of cues) seed = (Math.imul(31, seed) + character.codePointAt(0)) >>> 0;
   const opening = settings.find(([pattern]) => pattern.test(cues))?.[1] ?? scenes[card.faction] ?? scenes.veil;
   const role = card.kind === "item" ? `item-${card.itemEffect}`
-    : [card.active2, card.active1, card.ability].find((id) => id !== "basic" && Object.hasOwn(beats, id));
+    : [...(card.active2?.effects ?? []), ...(card.active1?.effects ?? [])]
+      .map((id) => effectBeats[id]).find(Boolean) ?? card.ability;
   const closing = beats[role] ?? beats.basic;
   const scene = opening[(seed + variant) % opening.length];
   const beat = closing[(Math.floor(seed / opening.length) + Math.floor(variant / opening.length)) % closing.length];

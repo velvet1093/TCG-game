@@ -47,6 +47,9 @@
         <section class="draft-box" aria-labelledby="draft-title">
           <h3 id="draft-title">Auto-fill</h3>
           <p class="field-help">Tap Lock beside a field to keep its value and use it as context for the draft.</p>
+          <label for="draft-character">Character name <span class="optional">(optional)</span></label>
+          <input name="character" id="draft-character" maxlength="80" placeholder="Name the character if you know it" aria-describedby="character-help">
+          <p class="field-help" id="character-help">Add their series or version to the concept for more specific moves and flavor.</p>
           <label>Concept <span class="optional">(optional)</span><textarea name="concept" maxlength="600" rows="2" placeholder="A forest guardian who shields the lane"></textarea></label>
           <label>AI provider
             <select name="draftProvider">
@@ -80,8 +83,12 @@
           <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="1" max="9" required></div>
           <div class="card-field wide"><label for="card-ability">Passive skill</label><select id="card-ability" name="ability"></select></div>
           <p class="field-help wide" id="ability-help"></p>
-          <div class="card-field"><label for="card-active1">Active skill 1</label><select id="card-active1" name="active1"></select><p class="field-help" id="active1-help"></p></div>
-          <div class="card-field"><label for="card-active2">Active skill 2</label><select id="card-active2" name="active2"></select><p class="field-help" id="active2-help"></p></div>
+          <div class="wide attack-editors" id="attack-editors"></div>
+          <div class="wide ability-drafting">
+            <button type="button" id="effects-fill" data-action="effects-fill">Auto-fill effects</button>
+            <p class="field-help" id="effects-draft-help">Name an attack, then draft its combat effects.</p>
+            <p id="effects-draft-status" role="status"></p>
+          </div>
         </div>
         <div id="item-fields" hidden>
           <div class="card-field"><label for="card-effect">Item effect</label><select id="card-effect" name="itemEffect"></select><p class="field-help" id="item-effect-help"></p></div>
@@ -121,7 +128,7 @@
         <li>Each Core starts at 20 health. Bring 15 cards and up to 3 copies of each card.</li>
         <li>Start with 4 cards and 2 Pulse. Your opening hand includes an affordable card if your deck has one. At the start of each turn, draw a card and refill Pulse. The first player skips the opening draw. Capacity grows by 1 each round, up to 6.</li>
         <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
-        <li>Tap a ready unit to use one of its active skills or shift it to an adjacent empty lane. Some skills cost Pulse. A unit can act once per turn.</li>
+        <li>Tap a ready unit to choose one of its attacks or shift to an adjacent empty lane. The attack’s effects determine its Pulse cost. A unit can act once per turn.</li>
         <li>Offensive skills target the opposite lane. Units trade damage when they fight. An open lane exposes the opposing Core. Passive skills apply automatically.</li>
         <li>Play an item from your hand on your turn. Tap a highlighted unit for a targeted item, or tap Play item for a deck or Core effect. Items spend Pulse and are discarded after use.</li>
         <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 1 Core health when you would draw at the start of your turn.</li>

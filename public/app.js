@@ -1,9 +1,10 @@
-import { ABILITIES, ACTIVE_SKILLS, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
-  abilityFields, activeSkills, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, isItem, lockedCardIssue,
+import { ABILITIES, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+  draftFields as fieldsFor, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, fitEffectDraft, isItem, lockedCardIssue,
   statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 import { draftFlavor } from "./lore.js";
+import { ATTACK_EFFECTS, ATTACK_SLOTS, activeAttacks, attackPulse, emptyAttack, readAttack } from "./attacks.js";
 
 const main = document.querySelector("#main");
 const section = (id) => document.querySelector(`#${id}-template`).content.cloneNode(true);
@@ -11,8 +12,8 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
   id: "", kind: "unit", name: "", faction: "", cost: 2, attack: 2, health: 3,
-  ability: "basic", active1: "strike", active2: "none", itemEffect: "draw",
-  flavor: "", art: "", concept: "", shareArt: false, locks: [],
+  ability: "basic", active1: emptyAttack(), active2: emptyAttack(), itemEffect: "draw",
+  flavor: "", art: "", character: "", concept: "", shareArt: false, locks: [],
 });
 let file = blankCard();
 let library = { cards: [], deck: [...STARTER_DECK] };
@@ -25,6 +26,7 @@ let collectionKind = "";
 let formMessage = "";
 let draftMessage = "";
 let abilityMessage = "";
+let effectsMessage = "";
 let loreVariant = 0;
 let revision = 0;
 let artJob = 0;
@@ -45,7 +47,7 @@ const factionOf = (card) => Object.hasOwn(FACTIONS, card.faction) ? FACTIONS[car
 const abilityOf = (card) => Object.hasOwn(ABILITIES, card.ability) ? ABILITIES[card.ability] : ABILITIES.basic;
 const mobile = matchMedia("(max-width: 610px)");
 const studioFields = [...new Set([...cardFields("unit"), ...cardFields("item")])];
-const draftFields = (mode) => mode === "abilities" ? abilityFields(file.kind) : cardFields(file.kind);
+const draftFields = (mode) => fieldsFor(file.kind, mode);
 const selectedProvider = () => draftProvider ?? (aiAvailable ? "openai" : "openrouter");
 
 function openStorage() {
@@ -98,10 +100,14 @@ function artMarkup(card) {
     : `<span class="card-art placeholder" aria-hidden="true"><span>${faction?.icon ?? "✧"}</span></span>`;
 }
 
-function skillMarkup(id) {
-  const skill = ACTIVE_SKILLS[id];
-  return `<div class="card-skill"><div><strong>${skill.name}</strong><span class="skill-price" title="Pulse cost">✦ ${skill.pulse}</span></div>
-    <p>${skill.text}</p></div>`;
+function attackText(move) {
+  return move.effects.map((id) => ATTACK_EFFECTS[id].text).join(" ") || "Choose a combat effect.";
+}
+
+function attackMarkup(move) {
+  return `<div class="card-skill"><div><strong>${escapeHTML(move.name)}</strong><span class="skill-price" title="Pulse cost">✦ ${attackPulse(move)}</span></div>
+    ${move.concept ? `<p class="move-concept">${escapeHTML(move.concept)}</p>` : ""}
+    <p>${attackText(move)}</p></div>`;
 }
 
 function cardMarkup(card) {
@@ -120,7 +126,7 @@ function cardMarkup(card) {
       ${item ? `<div class="card-skill item-effect"><div><strong>${effect?.name ?? "Choose effect"}</strong><span>One use</span></div><p>${effect?.text ?? ""}</p></div>` : `
       <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
       ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
-      ${activeSkills(card).map(skillMarkup).join("")}`}
+      ${ATTACK_SLOTS.map((slot) => readAttack(card[slot])).filter((move) => move.name.trim()).map(attackMarkup).join("")}`}
       ${card.flavor ? `<p class="flavor">${escapeHTML(card.flavor)}</p>` : ""}
     </div>
   </article>`;
@@ -200,18 +206,17 @@ function actionButton(label, action, lane) {
 }
 
 function unitTrayMarkup(unit, lane) {
-  const buttons = activeSkills(unit.card).map((id) => {
-    const skill = ACTIVE_SKILLS[id];
-    const issue = actionIssue(game, 0, { type: "skill", lane, skill: id });
-    return `<button type="button" data-action="skill" data-lane="${lane}" data-skill="${id}" ${issue ? "disabled" : ""}>
-      <span><strong>${skill.name}</strong><small>${issue || skill.text}</small></span><b class="skill-price">✦ ${skill.pulse}</b>
+  const buttons = activeAttacks(unit.card).map((move) => {
+    const issue = actionIssue(game, 0, { type: "skill", lane, skill: move.slot });
+    return `<button type="button" data-action="skill" data-lane="${lane}" data-skill="${move.slot}" ${issue ? "disabled" : ""}>
+      <span><strong>${escapeHTML(move.name)}</strong><small>${issue || attackText(move)}</small></span><b class="skill-price">✦ ${attackPulse(move)}</b>
     </button>`;
   }).join("");
   const shift = [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
   return `<div class="unit-tray"><div class="tray-heading"><strong>${escapeHTML(unit.card.name)}</strong>
     <button type="button" data-action="inspect-own" data-lane="${lane}">View card</button>
     ${shift ? `<button type="button" data-action="select-shift" data-lane="${lane}">Shift</button>` : ""}</div>
-    ${buttons ? `<div class="skill-options">${buttons}</div>` : "<p>This unit has no active skills.</p>"}</div>`;
+    ${buttons ? `<div class="skill-options">${buttons}</div>` : "<p>This unit has no attacks.</p>"}</div>`;
 }
 
 function renderArena(focus) {
@@ -408,19 +413,40 @@ function replaceFile(next) {
   formMessage = "";
   draftMessage = "";
   abilityMessage = "";
+  effectsMessage = "";
+}
+
+function mountAttackEditors() {
+  document.querySelector("#attack-editors").innerHTML = ATTACK_SLOTS.map((slot, index) => `
+    <fieldset class="attack-editor">
+      <legend>Attack ${index + 1}</legend>
+      <div class="card-field">
+        <label for="${slot}-name">Attack ${index + 1} name</label>
+        <input id="${slot}-name" data-attack-slot="${slot}" maxlength="44" placeholder="e.g. Clockwork Eclipse">
+      </div>
+      <label for="${slot}-concept">Move concept <span class="optional">(optional)</span></label>
+      <textarea id="${slot}-concept" data-attack-slot="${slot}" maxlength="160" rows="2" placeholder="e.g. Stops time, then hits the opponent"></textarea>
+      <div class="studio-grid">
+        <label for="${slot}-effect1">Effect 1<select id="${slot}-effect1" data-attack-slot="${slot}"></select></label>
+        <label for="${slot}-effect2">Effect 2<select id="${slot}-effect2" data-attack-slot="${slot}"></select></label>
+      </div><p class="field-help" id="${slot}-help"></p>
+      <button type="button" class="text-button" data-action="clear-attack" data-slot="${slot}">Clear attack ${index + 1}</button>
+    </fieldset>`).join("");
+  for (const select of document.querySelectorAll("select[data-attack-slot]")) {
+    select.append(new Option("None", ""));
+    for (const [id, effect] of Object.entries(ATTACK_EFFECTS)) select.append(new Option(effect.label, id));
+  }
 }
 
 function mountStudio() {
   const form = document.querySelector("#card-form");
+  mountAttackEditors();
   form.elements["openrouter-key"].value = openRouterKey;
   form.elements.openRouterModel.value = openRouterModel;
   form.elements.openRouterModel.placeholder = OPENROUTER_DEFAULT_MODEL;
   form.elements.faction.append(new Option("Choose element", ""));
   for (const [id, faction] of Object.entries(FACTIONS)) form.elements.faction.append(new Option(faction.name, id));
   for (const [id, ability] of Object.entries(ABILITIES)) form.elements.ability.append(new Option(ability.name, id));
-  for (const field of ["active1", "active2"]) {
-    for (const [id, skill] of Object.entries(ACTIVE_SKILLS)) form.elements[field].append(new Option(skill.name, id));
-  }
   for (const [id, effect] of Object.entries(ITEM_EFFECTS)) form.elements.itemEffect.append(new Option(effect.name, id));
   for (const field of studioFields) {
     const button = document.createElement("button");
@@ -429,7 +455,8 @@ function mountStudio() {
     button.dataset.action = "toggle-lock";
     button.dataset.field = field;
     button.setAttribute("aria-label", `Lock ${FIELD_LABELS[field].toLowerCase()} for auto-fill`);
-    form.elements[field].before(button);
+    const input = ATTACK_SLOTS.includes(field) ? document.getElementById(`${field}-name`) : form.elements[field];
+    input.before(button);
   }
   syncStudioFields();
 }
@@ -437,7 +464,16 @@ function mountStudio() {
 function syncStudioFields() {
   const form = document.querySelector("#card-form");
   if (!form) return;
-  for (const key of [...studioFields, "concept", "kind"]) form.elements[key].value = file[key];
+  for (const key of [...studioFields, "character", "concept", "kind"]) {
+    if (!ATTACK_SLOTS.includes(key)) form.elements[key].value = file[key];
+  }
+  for (const slot of ATTACK_SLOTS) {
+    const move = readAttack(file[slot]);
+    document.getElementById(`${slot}-name`).value = move.name;
+    document.getElementById(`${slot}-concept`).value = move.concept;
+    document.getElementById(`${slot}-effect1`).value = move.effects[0] ?? "";
+    document.getElementById(`${slot}-effect2`).value = move.effects[1] ?? "";
+  }
   form.elements.shareArt.checked = file.shareArt;
   updateStudio();
 }
@@ -473,9 +509,10 @@ function updateStudio() {
   }
   const ability = abilityOf(file);
   document.querySelector("#ability-help").textContent = ability.text;
-  for (const field of ["active1", "active2"]) {
-    const skill = ACTIVE_SKILLS[file[field]];
-    document.querySelector(`#${field}-help`).textContent = skill?.pulse ? `${skill.pulse} Pulse · ${skill.text}` : skill?.text ?? "";
+  for (const slot of ATTACK_SLOTS) {
+    const move = readAttack(file[slot]);
+    document.getElementById(`${slot}-help`).textContent = move.effects.length ? `${attackPulse(move)} Pulse · ${attackText(move)}` : "";
+    document.querySelector(`[data-action="clear-attack"][data-slot="${slot}"]`).hidden = !(move.name || move.concept || move.effects.length);
   }
   document.querySelector("#reroll-flavor").disabled = file.locks.includes("flavor");
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
@@ -512,6 +549,11 @@ function updateDraftControls(form) {
   document.querySelector("#ability-draft-help").textContent = allAbilitiesLocked ? "Unlock an ability field to draft it."
     : ready ? `Uses ${provider === "openrouter" ? "OpenRouter" : "OpenAI"} to draft only these fields.` : "Uses built-in suggestions when AI is unavailable.";
   document.querySelector("#ability-draft-status").textContent = abilityMessage;
+  const effectsReady = ATTACK_SLOTS.some((slot) => !file.locks.includes(slot) && readAttack(file[slot]).name.trim());
+  const effectsButton = document.querySelector("#effects-fill");
+  effectsButton.disabled = Boolean(drafting || artLoading || !effectsReady);
+  effectsButton.textContent = drafting === "effects" ? "Drafting…" : "Auto-fill effects";
+  document.querySelector("#effects-draft-status").textContent = effectsMessage;
 }
 
 async function readArtwork(artwork) {
@@ -550,7 +592,8 @@ async function readArtwork(artwork) {
 }
 
 function applyDraft(draft, brief) {
-  const result = brief.mode === "abilities" ? fitAbilityDraft(draft, brief) : fitDraft(draft, brief.locked, brief.kind);
+  const result = brief.mode === "abilities" ? fitAbilityDraft(draft, brief)
+    : brief.mode === "effects" ? fitEffectDraft(draft, brief.current, brief.locked) : fitDraft(draft, brief.locked, brief.kind);
   revision++;
   for (const key of draftFields(brief.mode)) {
     if (!Object.hasOwn(brief.locked, key)) file[key] = result[key];
@@ -562,15 +605,19 @@ function draftBrief(mode) {
   const locked = Object.fromEntries(draftFields(mode).filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
   const issue = lockedCardIssue(locked, file.kind);
   if (issue) throw new Error(issue);
-  const current = mode === "abilities" ? {
+  const current = mode ? {
     cost: file.cost, attack: isItem(file) ? undefined : file.attack, health: isItem(file) ? undefined : file.health,
     flavor: file.flavor.trim(),
+    active1: isItem(file) ? undefined : readAttack(file.active1),
+    active2: isItem(file) ? undefined : readAttack(file.active2),
   } : undefined;
-  return { name: file.name.trim(), faction: file.faction, concept: file.concept.trim(), locked, kind: file.kind, mode, current };
+  return { name: file.name.trim(), character: file.character.trim(), faction: file.faction, concept: file.concept.trim(),
+    locked, kind: file.kind, mode, current };
 }
 
 function setDraftMessage(mode, message) {
   if (mode === "abilities") abilityMessage = message;
+  else if (mode === "effects") effectsMessage = message;
   else draftMessage = message;
 }
 
@@ -578,7 +625,8 @@ function quickFill(mode) {
   try {
     const brief = draftBrief(mode);
     applyDraft(templateDraft({ ...brief, variant: loreVariant++ }), brief);
-    setDraftMessage(mode, mode === "abilities" ? "Ability suggestions applied." : "Quick fill applied. Review the draft before saving.");
+    setDraftMessage(mode, mode === "abilities" ? "Ability suggestions applied."
+      : mode === "effects" ? "Combat effects suggested." : "Quick fill applied. Review the draft before saving.");
   } catch (error) {
     setDraftMessage(mode, error.message);
   }
@@ -589,7 +637,7 @@ async function autoFill(mode) {
   const useRouter = selectedProvider() === "openrouter";
   if (drafting) return;
   if (!(useRouter ? openRouterKey.trim() : aiAvailable)) {
-    if (mode === "abilities") quickFill(mode);
+    if (mode) quickFill(mode);
     return;
   }
   let brief;
@@ -600,8 +648,8 @@ async function autoFill(mode) {
     updateStudio();
     return;
   }
-  if (mode !== "abilities" && !brief.name && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
-    setDraftMessage(mode, "Add a name, element, or concept, lock a value, or choose to include artwork.");
+  if (!mode && !brief.name && !brief.character && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
+    setDraftMessage(mode, "Add a character, card name, element, or concept, or choose to include artwork.");
     updateStudio();
     return;
   }
@@ -625,7 +673,11 @@ async function autoFill(mode) {
     }
     if (revision !== requestRevision) return;
     applyDraft(draft, brief);
-    setDraftMessage(mode, mode === "abilities" ? "AI ability suggestions applied." : "AI draft applied. Review the fields before saving.");
+    const summary = mode === "abilities" ? "AI ability suggestions applied."
+      : mode === "effects" ? "AI combat effects applied." : "AI draft applied. Review the fields before saving.";
+    const identity = draft.recognizedCharacter ? ` Character used · ${draft.recognizedCharacter}.`
+      : brief.art ? " Character identity uncertain. Enter the name if you know it." : "";
+    setDraftMessage(mode, summary + identity);
   } catch (error) {
     if (revision === requestRevision) setDraftMessage(mode, error.message || "AI auto-fill is unavailable.");
   } finally {
@@ -641,7 +693,7 @@ async function saveCard(event) {
   const card = {
     ...Object.fromEntries(fields.map((key) => [key, file[key]])),
     id: file.id || crypto.randomUUID(), kind: file.kind, art: file.art, locks: file.locks.filter((key) => fields.includes(key)),
-    name: file.name.trim(), flavor: file.flavor.trim(),
+    name: file.name.trim(), character: file.character.trim(), flavor: file.flavor.trim(),
   };
   const issue = cardIssues(card)[0];
   if (issue) {
@@ -683,6 +735,7 @@ main.addEventListener("click", (event) => {
       revision++;
       draftMessage = "";
       abilityMessage = "";
+      effectsMessage = "";
       updateStudio();
       break;
     }
@@ -715,6 +768,18 @@ main.addEventListener("click", (event) => {
     case "ability-fill":
       void autoFill("abilities");
       break;
+    case "effects-fill":
+      void autoFill("effects");
+      break;
+    case "clear-attack":
+      revision++;
+      file[button.dataset.slot] = emptyAttack();
+      formMessage = "";
+      draftMessage = "";
+      abilityMessage = "";
+      effectsMessage = "";
+      syncStudioFields();
+      break;
   }
 });
 
@@ -726,6 +791,17 @@ main.addEventListener("input", (event) => {
   formMessage = "";
   draftMessage = "";
   abilityMessage = "";
+  effectsMessage = "";
+  const slot = event.target.dataset.attackSlot;
+  if (slot) {
+    file[slot] = {
+      name: document.getElementById(`${slot}-name`).value,
+      concept: document.getElementById(`${slot}-concept`).value,
+      effects: [document.getElementById(`${slot}-effect1`).value, document.getElementById(`${slot}-effect2`).value].filter(Boolean),
+    };
+    updateStudio();
+    return;
+  }
   if (id === "openrouter-key" || name === "openRouterModel") {
     draftProvider = "openrouter";
     if (id === "openrouter-key") openRouterKey = value;

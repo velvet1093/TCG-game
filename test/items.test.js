@@ -76,7 +76,9 @@ test("item drafts fit the effect price and skill-only drafts preserve scope and 
   assert.match(cardIssues({ ...item, cost: 1 })[0], /at least 2 Pulse/);
   const abilities = templateDraft({ kind: "unit", mode: "abilities", concept: "fast fire duelist",
     current: { cost: 2, attack: 3, health: 1 }, locked: { active1: "strike" } });
-  assert.deepEqual(abilities, { active1: "strike", active2: "lunge", ability: "haste" });
+  assert.equal(abilities.active1.name, "Strike");
+  assert.deepEqual(abilities.active2.effects, ["heavy"]);
+  assert.equal(abilities.ability, "haste");
   assert.deepEqual(fitAbilityDraft({ itemEffect: "damage-core" }, { kind: "item", current: { cost: 2 } }),
     { itemEffect: "damage-enemy" });
 });
