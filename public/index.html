@@ -42,6 +42,17 @@
           <div class="card-field"><label for="card-faction">Element</label><select id="card-faction" name="faction"></select></div>
           <div class="card-field wide"><label for="card-rarity">Rarity</label><select id="card-rarity" name="rarity" aria-describedby="rarity-help"></select>
             <p class="field-help" id="rarity-help"></p></div>
+          <div class="wide evolution-fields" id="evolution-fields">
+            <label for="card-stage">Stage</label>
+            <select id="card-stage" name="stage" aria-describedby="stage-help">
+              <option value="1">Stage 1 · Base</option><option value="2">Stage 2</option><option value="3">Stage 3</option>
+            </select>
+            <div id="evolves-from-field" hidden>
+              <label for="card-evolves-from">Evolves from</label>
+              <select id="card-evolves-from" name="evolvesFrom" aria-describedby="stage-help"></select>
+            </div>
+            <p class="field-help" id="stage-help"></p>
+          </div>
           <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
             <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
           <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>
@@ -129,7 +140,8 @@
       <ol>
         <li>Each Core starts at 20 health. Bring 15 cards and up to 3 copies of each card.</li>
         <li>Start with 4 cards and 2 Pulse. Your opening hand includes an affordable card if your deck has one. At the start of each turn, draw a card and refill Pulse. The first player skips the opening draw. Capacity grows by 1 each round, up to 6.</li>
-        <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
+        <li>Select a Stage 1 unit, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
+        <li>After three of your turns have started since a unit was deployed or last evolved, select its linked next stage from your hand and tap the unit to evolve it. Pay the new card’s Pulse cost. Each stage keeps the unit’s damage and action state.</li>
         <li>Tap a ready unit to choose one of its attacks or shift to an adjacent empty lane. The attack’s effects determine its Pulse cost. A unit can act once per turn.</li>
         <li>Offensive skills target the opposite lane. Units trade damage when they fight. An open lane exposes the opposing Core. Passive skills apply automatically.</li>
         <li>Play an item from your hand on your turn. Tap a highlighted unit for a targeted item, or tap Play item for a deck or Core effect. Items spend Pulse and are discarded after use.</li>

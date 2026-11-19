@@ -1,4 +1,4 @@
-import { ITEM_EFFECTS, LIMITS, deckIssue, isItem } from "./cards.js";
+import { EVOLUTION_TURNS, ITEM_EFFECTS, LIMITS, deckIssue, evolvesFrom, isItem, unitStage } from "./cards.js";
 import { activeAttacks, attackPulse } from "./attacks.js";
 
 const labels = ["You", "Rival"];
@@ -33,11 +33,11 @@ export function createGame(cards, playerDeck, rivalDeck, random = Math.random) {
     createSide(shuffle(deck.map((id) => cards.find((card) => card.id === id)), random)));
   for (const side of sides) {
     for (let i = 0; i < 4; i++) draw(side);
-    const playableUnit = (card) => card.cost <= 2 && !isItem(card);
+    const playableUnit = (card) => card.cost <= 2 && !isItem(card) && unitStage(card) === 1;
     if (!side.hand.some(playableUnit)) {
       const preferred = side.deck.findLastIndex(playableUnit);
-      const affordable = preferred === -1 && side.hand.every((card) => card.cost > 2)
-        ? side.deck.findLastIndex((card) => card.cost <= 2) : preferred;
+      const affordable = preferred === -1 && !side.hand.some((card) => isItem(card) && card.cost <= 2)
+        ? side.deck.findLastIndex((card) => isItem(card) && card.cost <= 2) : preferred;
       if (affordable !== -1) {
         [side.deck[affordable], side.hand[3]] = [side.hand[3], side.deck[affordable]];
       }
@@ -55,6 +55,7 @@ function beginTurn(game, { opening = false } = {}) {
   game.struck = [];
   for (const unit of side.board) {
     if (unit) {
+      unit.turnsAtStage = Math.min(EVOLUTION_TURNS, (unit.turnsAtStage ?? 0) + 1);
       unit.ready = !unit.stunned;
       unit.stunned = false;
     }
@@ -132,6 +133,10 @@ function itemIssue(game, sideIndex, { hand, lane }) {
   return "";
 }
 
+export function evolutionTurnsLeft(unit) {
+  return EVOLUTION_TURNS - (unit.turnsAtStage ?? 0);
+}
+
 export function actionIssue(game, sideIndex, action) {
   if (game.winner !== null) return "The duel has ended.";
   if (game.turn !== sideIndex) return "Wait for your turn.";
@@ -139,10 +144,18 @@ export function actionIssue(game, sideIndex, action) {
   if (action.type === "item") return itemIssue(game, sideIndex, action);
   if (!Number.isInteger(action.lane) || action.lane < 0 || action.lane >= LIMITS.lanes) return "Choose a lane.";
   const side = game.sides[sideIndex];
-  if (action.type === "deploy") {
+  if (action.type === "deploy" || action.type === "evolve") {
     const card = side.hand[action.hand];
     if (!Number.isInteger(action.hand) || !card) return "Choose a card from your hand.";
     if (isItem(card)) return "Play this item for its effect.";
+    if (action.type === "evolve") {
+      const unit = side.board[action.lane];
+      if (!unit || !evolvesFrom(card, unit.card)) return "Choose this card’s previous stage.";
+      const turns = evolutionTurnsLeft(unit);
+      if (turns > 0) return `${unit.card.name} needs ${turns} more ${turns === 1 ? "turn" : "turns"} to evolve.`;
+      return card.cost > side.pulse ? "You need more Pulse." : "";
+    }
+    if (unitStage(card) > 1) return "Play this card by evolving its previous stage.";
     if (side.board[action.lane]) return "That lane is occupied.";
     if (card.cost > side.pulse) return "You need more Pulse.";
     return "";
@@ -281,7 +294,7 @@ export function act(game, sideIndex, action) {
     case "deploy": {
       const [card] = side.hand.splice(action.hand, 1);
       side.pulse -= card.cost;
-      side.board[lane] = { card, health: card.health, ready: card.ability === "haste" };
+      side.board[lane] = { card, health: card.health, ready: card.ability === "haste", turnsAtStage: 0 };
       log(game, `${labels[sideIndex]} deploy ${card.name} to lane ${lane + 1}.`);
       if (card.ability === "draw") draw(side);
       if (card.ability === "heal") side.core = Math.min(LIMITS.core, side.core + 2);
@@ -289,6 +302,18 @@ export function act(game, sideIndex, action) {
         opponent.board[lane].health--;
         clearLane(game, opponent, lane);
       }
+      break;
+    }
+    case "evolve": {
+      const [card] = side.hand.splice(action.hand, 1);
+      const unit = side.board[lane];
+      const damage = unit.card.health - unit.health;
+      side.pulse -= card.cost;
+      log(game, `${unit.card.name} evolves into ${card.name} in lane ${lane + 1}.`);
+      side.discard.push(unit.card);
+      unit.card = card;
+      unit.health = Math.max(1, card.health - damage);
+      unit.turnsAtStage = 0;
       break;
     }
     case "shift": {
@@ -342,16 +367,19 @@ function rankBotActions(game) {
         if (target && !opponent.board[to] && !actionIssue(game, 1, action)) options.push({ score: 1, action });
       }
     }
-    if (!unit) {
-      side.hand.forEach((card, hand) => {
-        if (isItem(card) || card.cost > side.pulse) return;
+    side.hand.forEach((card, hand) => {
+      if (isItem(card) || card.cost > side.pulse) return;
+      if (unit) {
+        const action = { type: "evolve", lane, hand };
+        if (!actionIssue(game, 1, action)) options.push({ score: 12, action });
+      } else if (unitStage(card) === 1) {
         let score = 4 + card.cost + (target ? 0.5 : 0);
         if (card.ability === "haste" && !target) score += 3;
         if (card.ability === "ping" && target?.health === 1) score += 6;
         if (card.ability === "heal" && side.core <= 18) score += 2;
         options.push({ score, action: { type: "deploy", lane, hand } });
-      });
-    }
+      }
+    });
   }
   side.hand.forEach((card, hand) => {
     if (!isItem(card)) return;

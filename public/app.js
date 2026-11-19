@@ -1,7 +1,7 @@
-import { ABILITIES, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, RARITIES, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+import { ABILITIES, EVOLUTION_TURNS, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, RARITIES, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
   draftFields as fieldsFor, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, fitEffectDraft, isItem, lockedCardIssue,
-  itemEffectFits, minimumPulse, rarityOf, statBudget, templateDraft } from "./cards.js";
-import { act, actionIssue, createGame, playRival } from "./engine.js";
+  evolutionIssue, evolvesFrom, itemEffectFits, minimumPulse, rarityOf, statBudget, templateDraft, unitStage } from "./cards.js";
+import { act, actionIssue, createGame, evolutionTurnsLeft, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 import { draftFlavor } from "./lore.js";
 import { ATTACK_EFFECTS, ATTACK_SLOTS, activeAttacks, attackPulse, emptyAttack, readAttack } from "./attacks.js";
@@ -12,6 +12,7 @@ const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
   id: "", kind: "unit", name: "", faction: "", rarity: "common", cost: 2, attack: 2, health: 3,
+  stage: 1, evolvesFrom: "",
   ability: "basic", active1: emptyAttack(), active2: emptyAttack(), itemEffect: "draw",
   flavor: "", art: "", character: "", concept: "", shareArt: false, locks: [],
 });
@@ -115,6 +116,8 @@ function cardMarkup(card) {
   const item = isItem(card);
   const kind = item ? "Item" : "Unit";
   const rarity = RARITIES[rarityOf(card)]?.name ?? "";
+  const stage = unitStage(card);
+  const prior = !item && stage > 1 ? catalog().find((entry) => evolvesFrom(card, entry)) : null;
   const effect = ITEM_EFFECTS[card.itemEffect];
   const name = escapeHTML(card.name || `Untitled ${kind.toLowerCase()}`);
   const ability = abilityOf(card);
@@ -124,7 +127,8 @@ function cardMarkup(card) {
         : `<span class="card-hp" title="Health">${escapeHTML(card.health || "–")} <small>HP</small></span>`}</header>
     <div class="card-window">${artMarkup(card)}</div>
     <div class="card-body">
-      <p class="card-rarity">${rarity}</p>
+      <p class="card-rarity">${rarity}${item ? "" : ` · Stage ${stage}`}</p>
+      ${prior ? `<p class="card-lineage">Evolves from ${escapeHTML(prior.name)}</p>` : ""}
       ${item ? `<div class="card-skill item-effect"><div><strong>${effect?.name ?? "Choose effect"}</strong><span>One use</span></div><p>${effect?.text ?? ""}</p></div>` : `
       <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
       ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
@@ -186,21 +190,25 @@ function coreMarkup(side, index, impact) {
     <div class="core-health"><strong>${side.core}</strong><meter min="0" max="${LIMITS.core}" value="${side.core}" aria-label="${name} health"></meter></div></div>`;
 }
 
-function unitMarkup(unit, lane, own, action, impact, itemTarget) {
+function unitMarkup(unit, lane, own, action, impact, target) {
   if (!unit) return `<div class="empty-slot">${action || '<span aria-hidden="true">◇</span><span>Open</span>'}${impactMarkup(impact)}</div>`;
   const { card } = unit;
   const faction = factionOf(card);
   const selected = own && selection?.type === "unit" && selection.lane === lane;
-  const label = itemTarget ? `Use ${itemTarget.name} on ${card.name}` : `${own ? "Choose actions for" : "View"} ${card.name}, ${unit.health} health`;
-  return `<div class="unit-slot">${impactMarkup(impact)}<button type="button" class="unit${selected ? " is-selected" : ""}${itemTarget ? " item-target" : ""}"
-    style="--faction: ${faction.color}" data-action="${itemTarget ? "play-item" : own ? "select-unit" : "inspect-rival"}" data-lane="${lane}"
-    aria-label="${escapeHTML(label)}"${own && !itemTarget ? ` aria-pressed="${selected}"` : ""}>
+  const label = target?.label ?? `${own ? "Choose actions for" : "View"} ${card.name}, ${unit.health} health`;
+  return `<div class="unit-slot">${impactMarkup(impact)}<button type="button" class="unit${selected ? " is-selected" : ""}${target ? " card-target" : ""}"
+    style="--faction: ${faction.color}" data-action="${target?.action ?? (own ? "select-unit" : "inspect-rival")}" data-lane="${lane}"
+    aria-label="${escapeHTML(label)}"${own && !target ? ` aria-pressed="${selected}"` : ""}>
     <span class="unit-head"><span aria-hidden="true">${faction.icon}</span><strong>${escapeHTML(card.name)}</strong></span>
     <span class="unit-art-frame">${artMarkup(card)}</span>
     <span class="unit-stats"><span title="Attack">⚔ ${card.attack}</span><span class="unit-hp" title="Health">${unit.health} HP</span></span>
-    ${itemTarget ? '<span class="ready-state is-ready">Use item here</span>'
+    ${target ? `<span class="ready-state is-ready">${target.text}</span>`
       : own ? `<span class="ready-state ${unit.ready ? "is-ready" : ""}">${unit.ready ? "Ready" : "Exhausted"}</span>` : ""}
     </button></div>`;
+}
+
+function itemTarget(card, unit) {
+  return { action: "play-item", label: `Use ${card.name} on ${unit.card.name}`, text: "Use item here" };
 }
 
 function actionButton(label, action, lane) {
@@ -215,9 +223,16 @@ function unitTrayMarkup(unit, lane) {
     </button>`;
   }).join("");
   const shift = [lane - 1, lane + 1].some((to) => !actionIssue(game, 0, { type: "shift", lane, to }));
+  const player = game.sides[0];
+  const nextStage = [...player.hand, ...player.deck].some((card) => evolvesFrom(card, unit.card));
+  const turns = evolutionTurnsLeft(unit);
+  const evolution = nextStage ? (turns
+    ? `${turns} of ${EVOLUTION_TURNS} turns left to evolve.`
+    : "Ready to evolve. Select the next stage from your hand.") : "";
   return `<div class="unit-tray"><div class="tray-heading"><strong>${escapeHTML(unit.card.name)}</strong>
     <button type="button" data-action="inspect-own" data-lane="${lane}">View card</button>
     ${shift ? `<button type="button" data-action="select-shift" data-lane="${lane}">Shift</button>` : ""}</div>
+    ${evolution ? `<p>${evolution}</p>` : ""}
     ${buttons ? `<div class="skill-options">${buttons}</div>` : "<p>This unit has no attacks.</p>"}</div>`;
 }
 
@@ -236,8 +251,11 @@ function renderArena(focus) {
   game.impact = null;
   const handScroll = arena.querySelector(".hand-rail")?.scrollLeft ?? 0;
   const logOpen = arena.querySelector(".combat-log")?.open ?? !mobile.matches;
-  const selected = selection?.type === "deploy" || selection?.type === "item" ? player.hand[selection.hand] : null;
+  const selected = player.hand[selection?.hand];
   const effect = isItem(selected) ? ITEM_EFFECTS[selected.itemEffect] : null;
+  const evolving = selection?.type === "evolve";
+  const evolutionLanes = evolving ? player.board.flatMap((unit, lane) => unit && evolvesFrom(selected, unit.card) ? [lane] : []) : [];
+  const evolutionIssues = new Map(evolutionLanes.map((lane) => [lane, actionIssue(game, 0, { ...selection, lane })]));
   const unitTarget = effect?.target === "ally" || effect?.target === "enemy";
   const validTargets = unitTarget ? player.board.map((_, lane) => !actionIssue(game, 0, { ...selection, lane })) : [];
   const instantIssue = effect && !unitTarget ? actionIssue(game, 0, selection) : "";
@@ -249,10 +267,15 @@ function renderArena(focus) {
     const shiftHere = selection?.type === "shift" && !actionIssue(game, 0, { ...selection, to: lane })
       ? actionButton("Move", "shift", lane) : "";
     const hit = impact?.lane === lane && !impact.core ? impact : null;
+    const evolveHere = evolutionIssues.get(lane) === "" ? {
+      action: "evolve", label: `Evolve ${unit.card.name} into ${selected.name}`, text: "Evolve here",
+    } : null;
     return `<div class="lane"><span class="lane-title">Lane ${lane + 1}</span>
-      ${unitMarkup(rival.board[lane], lane, false, "", hit?.side === 1 ? hit : null, effect?.target === "enemy" && validTargets[lane] ? selected : null)}
+      ${unitMarkup(rival.board[lane], lane, false, "", hit?.side === 1 ? hit : null,
+        effect?.target === "enemy" && validTargets[lane] ? itemTarget(selected, rival.board[lane]) : null)}
       <div class="lane-divider" aria-hidden="true"><span>◇</span></div>
-      ${unitMarkup(unit, lane, true, deploy || shiftHere, hit?.side === 0 ? hit : null, effect?.target === "ally" && validTargets[lane] ? selected : null)}</div>`;
+      ${unitMarkup(unit, lane, true, deploy || shiftHere, hit?.side === 0 ? hit : null,
+        effect?.target === "ally" && validTargets[lane] ? itemTarget(selected, unit) : evolveHere)}</div>`;
   }).join("");
   const hand = player.hand.map((card, index) => {
     const active = selection?.hand === index;
@@ -263,6 +286,12 @@ function renderArena(focus) {
   if (selection?.type === "shift") guidance = "Choose an adjacent open lane.";
   if (selected) {
     if (selected.cost > player.pulse) guidance = `${selected.name} needs ${selected.cost} Pulse.`;
+    else if (evolving) {
+      const ready = [...evolutionIssues.values()].includes("");
+      const prior = catalog().find((card) => evolvesFrom(selected, card));
+      guidance = ready ? `Choose a lane to evolve into ${selected.name}.`
+        : evolutionIssues.get(evolutionLanes[0]) || `Deploy ${prior?.name ?? "its previous stage"} to evolve this card.`;
+    }
     else if (!effect) guidance = player.board.every(Boolean) ? "All three lanes are occupied." : `Deploy ${selected.name} to an open lane.`;
     else if (unitTarget && !validTargets.some(Boolean)) guidance = effect.target === "ally" ? "No injured allied units." : "No rival units to target.";
     else guidance = instantIssue || effect.text;
@@ -308,7 +337,9 @@ function handleArena(button) {
   arenaMessage = "";
   if (action === "select-card") {
     const hand = Number(index);
-    selection = selection?.hand === hand ? null : { type: isItem(game.sides[0].hand[hand]) ? "item" : "deploy", hand };
+    const card = game.sides[0].hand[hand];
+    const type = isItem(card) ? "item" : unitStage(card) > 1 ? "evolve" : "deploy";
+    selection = selection?.hand === hand ? null : { type, hand };
   } else if (action === "select-unit") {
     selection = selection?.type === "unit" && selection.lane === Number(lane) ? null : { type: "unit", lane: Number(lane) };
   } else if (action === "select-shift") {
@@ -316,7 +347,7 @@ function handleArena(button) {
   } else if (action === "cancel") {
     selection = null;
   } else {
-    const command = action === "deploy" || action === "play-item" ? { ...selection, lane: Number(lane) } :
+    const command = ["deploy", "play-item", "evolve"].includes(action) ? { ...selection, lane: Number(lane) } :
       action === "shift" ? { ...selection, to: Number(lane) } : { type: action, lane: Number(lane), skill };
     arenaMessage = act(game, 0, command);
     if (!arenaMessage) {
@@ -478,7 +509,26 @@ function syncStudioFields() {
     document.getElementById(`${slot}-effect2`).value = move.effects[1] ?? "";
   }
   form.elements.shareArt.checked = file.shareArt;
+  syncEvolutionFields(form);
   updateStudio();
+}
+
+function syncEvolutionFields(form) {
+  const item = isItem(file);
+  document.querySelector("#evolution-fields").hidden = item;
+  form.elements.stage.value = file.stage;
+  const advanced = !item && file.stage > 1;
+  document.querySelector("#evolves-from-field").hidden = !advanced;
+  const link = form.elements.evolvesFrom;
+  const previousStage = file.stage - 1;
+  const eligible = advanced ? catalog().filter((card) => !isItem(card) && card.id !== file.id && unitStage(card) === previousStage) : [];
+  link.replaceChildren(new Option(`Choose a Stage ${previousStage} unit`, ""),
+    ...eligible.map((card) => new Option(`${card.name} · ${factionOf(card)?.name ?? "Unit"}`, card.id)));
+  link.value = eligible.some((card) => card.id === file.evolvesFrom) ? file.evolvesFrom : "";
+  document.querySelector("#stage-help").textContent = advanced
+    ? eligible.length ? `Playable after its previous stage has been in play for ${EVOLUTION_TURNS} of your turns.`
+      : `Save a Stage ${previousStage} unit before linking this evolution.`
+    : "Base units deploy directly. You choose each card’s stage.";
 }
 
 function updateStudio() {
@@ -706,8 +756,9 @@ async function saveCard(event) {
     ...Object.fromEntries(fields.map((key) => [key, file[key]])),
     id: file.id || crypto.randomUUID(), kind: file.kind, art: file.art, locks: file.locks.filter((key) => fields.includes(key)),
     name: file.name.trim(), character: file.character.trim(), flavor: file.flavor.trim(),
+    ...(!isItem(file) && { stage: file.stage, evolvesFrom: file.stage > 1 ? file.evolvesFrom : "" }),
   };
-  const issue = cardIssues(card)[0];
+  const issue = cardIssues(card)[0] || evolutionIssue(card, catalog());
   if (issue) {
     formMessage = issue;
     updateStudio();
@@ -827,7 +878,13 @@ main.addEventListener("input", (event) => {
     updateStudio();
     return;
   }
-  file[name] = type === "checkbox" ? checked : type === "number" ? valueAsNumber : value;
+  if (name === "stage") {
+    file.stage = Number(value);
+    file.evolvesFrom = "";
+  } else {
+    file[name] = type === "checkbox" ? checked : type === "number" ? valueAsNumber : value;
+  }
+  if (name === "kind" || name === "stage") syncEvolutionFields(event.target.form);
   updateStudio();
 });
 

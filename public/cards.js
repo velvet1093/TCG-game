@@ -38,6 +38,22 @@ export const ITEM_EFFECTS = {
 };
 
 export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
+export const EVOLUTION_TURNS = 3;
+export const unitStage = (card) => card.stage ?? 1;
+export const evolvesFrom = (card, prior) => !isItem(card) && !isItem(prior) &&
+  Boolean(card.evolvesFrom) && card.evolvesFrom === prior.id && unitStage(card) === unitStage(prior) + 1;
+
+export function evolutionIssue(card, cards) {
+  if (!isItem(card)) {
+    const stage = unitStage(card);
+    if (![1, 2, 3].includes(stage)) return "Choose a stage from 1 to 3.";
+    if (stage > 1 && !cards.some((prior) => prior.id !== card.id && evolvesFrom(card, prior))) {
+      return `Choose the Stage ${stage - 1} unit this card evolves from.`;
+    }
+  }
+  const dependent = card.id && cards.find((next) => !isItem(next) && next.evolvesFrom === card.id && !evolvesFrom(next, card));
+  return dependent ? `${dependent.name} evolves from this unit. Change that link before changing this card’s type or stage.` : "";
+}
 export const CARD_FIELDS = ["name", "faction", "rarity", "cost", "attack", "health", ...ATTACK_SLOTS, "ability", "flavor"];
 export const ITEM_FIELDS = ["name", "faction", "rarity", "cost", "itemEffect", "flavor"];
 export const UNIT_SKILL_FIELDS = [...ATTACK_SLOTS, "ability"];

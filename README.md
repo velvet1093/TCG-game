@@ -17,6 +17,7 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 - Reduce the rival's 20-health Core to zero. Bring 15 cards with up to three copies of each unit.
 - Both players start with four cards, including a card they can afford if their deck contains one. At the start of your turn, draw once and refill Pulse. The first player skips the opening draw. Pulse capacity starts at two, growing by one per round to six.
 - Spend Pulse to play units in empty lanes. Tap a ready unit to choose one of its named attacks or shift it into an open neighboring lane. The attack’s effects set its Pulse cost. Units trade damage on a lane hit and hit the opposing Core when the lane is open.
+- Deploy Stage 1 units directly. Once a unit has started three of your turns in play, select a matching Stage 2 card from your hand and tap the unit to evolve it in the same lane. Stage 3 requires three more of your turns after evolving. Each evolution costs the next card’s printed Pulse, carries damage forward (at least 1 HP), and preserves readiness. The previous card goes to the discard pile, and on-deploy passives do not trigger.
 - Striking in two distinct lanes in one turn gives one bonus Pulse. Starting a turn with an empty deck costs one Core health.
 - Units can have up to two custom-named attacks and one automatic passive. Each attack can combine up to two combat effects. Attack, Health, and the passive use a shared stat budget based on deploy cost. New cards start with empty attack slots. Saved cards with an explicit older attack keep that attack and its mechanics.
 - Items use the same deck and Pulse pool as units. On your turn, select an item from your hand, then tap a highlighted target or **Play item**. Once its effect resolves, it goes to the discard pile. Item effects can draw one card, heal an allied unit, damage a rival unit, restore your Core, or damage the rival Core.
@@ -30,6 +31,8 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000). There are no package depend
 4. In **Deck**, open **Active deck** and remove a card to free a slot. Add your new unit from the collection and start a **New duel**.
 
 In a unit’s attack slot, enter any name and an optional move concept. Choose effects manually or use **Auto-fill effects** to suggest the rules for your move without editing its name or concept. The suggested effects use the game’s supported mechanics, including lane hits, adjacent damage, Core drain, self-heal, stun, and draw. Clear any optional slot with **Clear attack**.
+
+Set **Stage** by hand in Card Studio. Save lower stages first, then use **Evolves from** to link a Stage 2 card to a Stage 1 card, or a Stage 3 card to a Stage 2 card. Add the cards for your evolution line to the deck. Stage and evolution links are manual fields. Existing units count as Stage 1.
 
 The collection, compressed artwork, and deck are saved in the current browser. Edits to a card apply the next time you start a duel. Clearing site data or switching browser profiles affects access to those saved cards.
 
