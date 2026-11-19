@@ -30,11 +30,26 @@ export const ACTIVE_SKILLS = {
   recover: { name: "Recover", pulse: 1, bonus: 0, text: "Restore 3 health to this injured unit." },
 };
 
+export const ITEM_EFFECTS = {
+  draw: { name: "Draw", target: "self", cost: 1, amount: 1, text: "Draw 1 card from your deck." },
+  "heal-ally": { name: "Mend Unit", target: "ally", cost: 1, amount: 3, text: "Restore 3 HP to one injured allied unit." },
+  "damage-enemy": { name: "Blast Unit", target: "enemy", cost: 2, amount: 2, text: "Deal 2 damage to one rival unit." },
+  "heal-core": { name: "Restore Core", target: "self", cost: 2, amount: 3, text: "Restore 3 health to your Core." },
+  "damage-core": { name: "Sabotage Core", target: "rival", cost: 3, amount: 2, text: "Deal 2 damage to the rival Core." },
+};
+
 export const LIMITS = { deck: 15, copies: 3, core: 20, lanes: 3 };
 export const CARD_FIELDS = ["name", "faction", "cost", "attack", "health", "active1", "active2", "ability", "flavor"];
+export const ITEM_FIELDS = ["name", "faction", "cost", "itemEffect", "flavor"];
+export const UNIT_SKILL_FIELDS = ["active1", "active2", "ability"];
+export const isItem = (card) => card?.kind === "item";
+export const cardFields = (kind) => kind === "item" ? ITEM_FIELDS : CARD_FIELDS;
+export const abilityFields = (kind) => kind === "item" ? ["itemEffect"] : UNIT_SKILL_FIELDS;
+
 export const FIELD_LABELS = {
-  name: "Card name", faction: "Element", cost: "Deploy cost", attack: "Attack",
+  name: "Card name", faction: "Element", cost: "Pulse cost", attack: "Attack",
   health: "Health", active1: "Active skill 1", active2: "Active skill 2", ability: "Passive skill", flavor: "Flavor text",
+  itemEffect: "Item effect",
 };
 const statRanges = { cost: [1, 6], attack: [1, 7], health: [1, 9] };
 const skillDefaults = { active1: "strike", active2: "none" };
@@ -53,6 +68,7 @@ function fieldIssue(field, value) {
   }
   if (field === "faction" && (typeof value !== "string" || !Object.hasOwn(FACTIONS, value))) return "Choose an element.";
   if (field === "ability" && (typeof value !== "string" || !Object.hasOwn(ABILITIES, value))) return "Choose a passive skill.";
+  if (field === "itemEffect" && (typeof value !== "string" || !Object.hasOwn(ITEM_EFFECTS, value))) return "Choose an item effect.";
   if (Object.hasOwn(skillDefaults, field) && (typeof value !== "string" || !Object.hasOwn(ACTIVE_SKILLS, value))) {
     return "Choose an active skill or leave the slot empty.";
   }
@@ -67,7 +83,12 @@ function fieldIssue(field, value) {
 }
 
 export function cardIssues(card) {
-  const issues = CARD_FIELDS.map((field) => fieldIssue(field, card[field] ?? skillDefaults[field])).filter(Boolean);
+  const issues = cardFields(card.kind).map((field) => fieldIssue(field, card[field] ?? skillDefaults[field])).filter(Boolean);
+  if (isItem(card)) {
+    const effect = ITEM_EFFECTS[card.itemEffect];
+    if (!issues.length && card.cost < effect.cost) issues.push(`${effect.name} needs at least ${effect.cost} Pulse.`);
+    return issues;
+  }
   if (card.active1 && card.active1 !== "none" && card.active1 === card.active2) issues.push("Choose two different active skills.");
   if (issues.length === 0 && card.attack + card.health + ABILITIES[card.ability].weight > statBudget(card.cost)) {
     issues.push("Reduce the stats or increase the Pulse cost to stay within budget.");
@@ -75,11 +96,15 @@ export function cardIssues(card) {
   return issues;
 }
 
-export function lockedCardIssue(locked) {
-  for (const field of CARD_FIELDS) {
+export function lockedCardIssue(locked, kind = "unit") {
+  for (const field of cardFields(kind)) {
     if (!Object.hasOwn(locked, field)) continue;
     const issue = fieldIssue(field, locked[field]);
     if (issue) return `Check the locked ${FIELD_LABELS[field].toLowerCase()}. ${issue}`;
+  }
+  if (kind === "item") {
+    const effect = ITEM_EFFECTS[locked.itemEffect];
+    return effect && locked.cost < effect.cost ? `${effect.name} needs at least ${effect.cost} Pulse. Unlock its effect or cost.` : "";
   }
   if (locked.active1 && locked.active1 !== "none" && locked.active1 === locked.active2) {
     return "Unlock a duplicate active skill.";
@@ -91,16 +116,58 @@ export function lockedCardIssue(locked) {
   return "";
 }
 
+function fitUnitSkills(card, locked) {
+  const skills = Object.fromEntries(UNIT_SKILL_FIELDS.map((key) => [key, locked[key] ?? card[key] ?? skillDefaults[key]]));
+  if (skills.active1 === skills.active2 && skills.active1 !== "none") {
+    const open = Object.hasOwn(locked, "active2") ? "active1" : "active2";
+    skills[open] = open === "active1" && skills.active2 !== "strike" ? "strike" : "none";
+  }
+  return skills;
+}
+
+export function fitAbilityDraft(draft, { kind = "unit", locked = {}, current = {} } = {}) {
+  const issue = lockedCardIssue(locked, kind);
+  if (issue) throw new Error(issue);
+  if (kind === "item") {
+    const itemEffect = locked.itemEffect ?? draft.itemEffect;
+    const invalid = fieldIssue("itemEffect", itemEffect);
+    if (invalid) throw new Error(invalid);
+    const cost = Math.max(1, current.cost || 1);
+    if (ITEM_EFFECTS[itemEffect].cost <= cost) return { itemEffect };
+    if (locked.itemEffect) throw new Error(`Raise the play cost or unlock the item effect.`);
+    return { itemEffect: itemEffect === "heal-core" ? "heal-ally" : cost >= 2 ? "damage-enemy" : "draw" };
+  }
+  const skills = fitUnitSkills(draft, locked);
+  const invalid = UNIT_SKILL_FIELDS.map((field) => fieldIssue(field, skills[field])).find(Boolean);
+  if (invalid) throw new Error(invalid);
+  const remaining = statBudget(current.cost) - current.attack - current.health;
+  if (!Object.hasOwn(locked, "ability") && ABILITIES[skills.ability].weight > remaining) {
+    const alternatives = { guard: "heal", haste: "ping", draw: "heal" };
+    skills.ability = remaining >= 1 ? alternatives[skills.ability] ?? "basic" : "basic";
+  }
+  return skills;
+}
+
 // Fit the proposed card around the locks. Prefer the proposed ability, then
 // the proposed cost. Trim unlocked stats before raising an unlocked cost.
-export function fitDraft(draft, locked = {}) {
-  const issue = lockedCardIssue(locked);
+export function fitDraft(draft, locked = {}, kind = draft.kind ?? "unit") {
+  const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
-  const card = Object.fromEntries(CARD_FIELDS.map((key) => [key, Object.hasOwn(locked, key) ? locked[key] : draft[key] ?? skillDefaults[key]]));
-  if (card.active1 === card.active2 && card.active1 !== "none") {
-    const unlocked = Object.hasOwn(locked, "active2") ? "active1" : "active2";
-    card[unlocked] = unlocked === "active1" && card.active2 !== "strike" ? "strike" : "none";
+  const card = Object.fromEntries(cardFields(kind).map((key) => [key, locked[key] ?? draft[key] ?? skillDefaults[key]]));
+  if (kind === "item") {
+    card.kind = "item";
+    const effect = ITEM_EFFECTS[card.itemEffect];
+    if (!Object.hasOwn(locked, "cost") && effect && Number.isInteger(card.cost)) {
+      card.cost = Math.min(6, Math.max(effect.cost, card.cost));
+    }
+    if (!Object.hasOwn(locked, "itemEffect") && effect && effect.cost > card.cost) {
+      card.itemEffect = fitAbilityDraft(card, { kind, current: card }).itemEffect;
+    }
+    const invalid = cardIssues(card)[0];
+    if (invalid) throw new Error(invalid);
+    return card;
   }
+  Object.assign(card, fitUnitSkills(card, locked));
   for (const [key, [min, max]] of Object.entries(statRanges)) {
     if (Number.isInteger(card[key])) card[key] = Math.min(max, Math.max(min, card[key]));
   }
@@ -124,6 +191,8 @@ export function fitDraft(draft, locked = {}) {
 
 const sample = (id, name, faction, cost, attack, health, ability, flavor, active2 = "none") =>
   ({ id, name, faction, cost, attack, health, ability, flavor, active1: "strike", active2, art: "" });
+const item = (id, name, faction, itemEffect, flavor) =>
+  ({ id, name, faction, kind: "item", cost: ITEM_EFFECTS[itemEffect].cost, itemEffect, flavor, art: "" });
 
 export const STARTER_CARDS = [
   sample("matchstick", "Matchstick Familiar", "ember", 1, 1, 2, "ping", "A little blaze goes a long way."),
@@ -149,12 +218,17 @@ export const STARTER_CARDS = [
   sample("basalt", "Basalt Waykeeper", "stone", 3, 2, 4, "guard", "Every traveler leaves a pebble at the pass. By winter, the pile is taller than the gate.", "recover"),
   sample("beacon", "Firstlight Keeper", "dawn", 3, 3, 4, "heal", "At sunrise they open the lighthouse shutters one at a time, starting with the smallest.", "siphon"),
   sample("copper", "Copperline Mechanic", "alloy", 2, 2, 2, "draw", "She can hear a loose rivet from the other end of a moving train.", "sweep"),
+  item("dispatch", "Harbor Dispatch", "tide", "draw", "The harbor master seals every letter twice. The first seal is for the rain."),
+  item("patch", "Mossweave Patch", "grove", "heal-ally", "The dressings are cut from river moss at low tide and kept wet until needed."),
+  item("flare", "Signal Flare", "ember", "damage-enemy", "One flare means clear the track. Two means someone already missed the first."),
+  item("flask", "Dawn Flask", "dawn", "heal-core", "The lighthouse keeper leaves one flask unopened for whoever takes the watch."),
+  item("charge", "Relay Charge", "storm", "damage-core", "The electricians listen for the third click before trusting the line."),
 ];
 
-export const STARTER_DECK = ["matchstick", "matchstick", "cinder", "static", "bell", "sun", "emberglass",
-  "foam", "foam", "ferryman", "ferryman", "breakwater", "rime", "mist", "tidevault"];
-export const RIVAL_DECK = ["sprout", "sprout", "veilcat", "veilcat", "cedar", "copper", "mask", "mask",
-  "heron", "beacon", "silk", "basalt", "gate", "gate", "ivy"];
+export const STARTER_DECK = ["matchstick", "dispatch", "cinder", "static", "bell", "sun", "emberglass",
+  "foam", "patch", "ferryman", "flare", "breakwater", "rime", "mist", "tidevault"];
+export const RIVAL_DECK = ["sprout", "dispatch", "veilcat", "veilcat", "cedar", "copper", "mask", "flask",
+  "heron", "beacon", "silk", "basalt", "gate", "charge", "ivy"];
 
 export function deckIssue(deck, cards) {
   if (!Array.isArray(deck) || deck.length !== LIMITS.deck) return `A deck needs exactly ${LIMITS.deck} cards.`;
@@ -192,14 +266,37 @@ const themes = [
   ["veil", /\b(shadow|ghost|dark|void|moon|veil|midnight)\b/],
 ];
 
-export function templateDraft({ name = "", faction = "", concept = "", locked = {}, variant = 0 }) {
-  const issue = lockedCardIssue(locked);
+const itemIdeas = [
+  ["damage-core", "Relay Charge", "storm", /(?:enemy|rival|damage|attack|sabotage).{0,24}core|core.{0,24}(?:damage|enemy|rival|sabotage)/],
+  ["heal-core", "Dawn Flask", "dawn", /(?:heal|restore|repair|mend).{0,24}core|core.{0,24}(?:heal|restore|repair|mend)/],
+  ["heal-ally", "Mossweave Patch", "grove", /heal|mend|recover|restore|bandage|potion|medicine/],
+  ["damage-enemy", "Signal Flare", "ember", /damage|enemy|rival|blast|flare|bomb|burn|strike/],
+  ["draw", "Harbor Dispatch", "tide", /draw|dispatch|letter|map|scout|find/],
+];
+
+export function templateDraft({ name = "", faction = "", concept = "", locked = {}, kind = "unit", mode, current, variant = 0 }) {
+  const issue = lockedCardIssue(locked, kind);
   if (issue) throw new Error(issue);
   const contextName = locked.name ?? name;
   const theme = `${concept} ${contextName} ${locked.flavor ?? ""}`.toLowerCase();
-  const fromConcept = themes.find(([, pattern]) => pattern.test(concept.toLowerCase()))?.[0];
+  const conceptText = concept.toLowerCase();
+  const fromConcept = themes.find(([, pattern]) => pattern.test(conceptText))?.[0];
   const fromTheme = themes.find(([, pattern]) => pattern.test(theme))?.[0];
-  const selected = locked.faction ?? fromConcept ?? (Object.hasOwn(FACTIONS, faction) ? faction : fromTheme ?? "veil");
+  const chosenElement = locked.faction ?? fromConcept ?? (Object.hasOwn(FACTIONS, faction) ? faction : fromTheme);
+  if (kind === "item") {
+    const choice = locked.itemEffect ? itemIdeas.find(([id]) => id === locked.itemEffect)
+      : itemIdeas.find(([, , , pattern]) => pattern.test(conceptText)) ??
+        itemIdeas.find(([, , , pattern]) => pattern.test(theme)) ?? itemIdeas.at(-1);
+    const [itemEffect, itemName, itemElement] = choice;
+    if (mode === "abilities") return fitAbilityDraft({ itemEffect }, { kind, locked, current });
+    const card = fitDraft({
+      name: itemName, faction: chosenElement ?? itemElement,
+      cost: ITEM_EFFECTS[itemEffect].cost, itemEffect, flavor: "",
+    }, locked, kind);
+    if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);
+    return card;
+  }
+  const selected = chosenElement ?? "veil";
   const preset = archetypes[selected];
   const roles = [
     ["guard", "recover", /tank|guard|shield|defend/],
@@ -208,14 +305,16 @@ export function templateDraft({ name = "", faction = "", concept = "", locked = 
     ["draw", "none", /draw|support|study|scout/],
     ["ping", "sweep", /blast|burn|damage|strike/],
   ];
-  const role = roles.find(([, , pattern]) => pattern.test(theme));
+  const role = roles.find(([, , pattern]) => pattern.test(conceptText)) ?? roles.find(([, , pattern]) => pattern.test(theme));
   const ability = locked.ability ?? role?.[0] ?? preset.ability;
+  const skills = { ability, active1: "strike", active2: role?.[1] ?? preset.active2 };
+  if (mode === "abilities") return fitAbilityDraft(skills, { kind, locked, current });
   const cost = locked.cost ?? (/legendary|boss|giant|powerful/.test(theme) ? 5 : /small|cheap|starter/.test(theme) ? 2 : 3);
   const stats = statBudget(cost) - ABILITIES[ability].weight;
   const attack = Math.min(7, Math.max(1, Math.floor(stats / 2) + (ability === "haste" ? 1 : ability === "guard" ? -1 : 0)));
   const card = fitDraft({
     name: preset.name, faction: selected, cost, attack, health: stats - attack,
-    ability, active1: "strike", active2: role?.[1] ?? preset.active2, flavor: "",
+    ...skills, flavor: "",
   }, locked);
   if (!Object.hasOwn(locked, "flavor")) card.flavor = draftFlavor({ ...card, name: contextName || card.name }, concept, variant);
   return card;

@@ -27,6 +27,11 @@ const beats = {
   sweep: ["The crew learned to leave an extra space on either side.", "The duelists leave the edges clear when practice begins."],
   siphon: ["The smallest reserve is always kept for the walk home.", "No one can recall seeing the spare flask run empty."],
   recover: ["The ritual never changes: straighten the gear, breathe, then stand.", "The apprentice knows which stitch to replace before the next crossing."],
+  "item-draw": ["The folded dispatch is addressed to whoever makes it back first.", "There is always a second route on the back of the map."],
+  "item-heal-ally": ["A clean strip is always tucked beneath the lid for the next caller.", "The field kit only has room for one bandage, so they cut it long."],
+  "item-damage-enemy": ["Everyone knows to cover their ears as soon as the wick bends.", "The maker filed a notch into the casing so it can be held in the dark."],
+  "item-heal-core": ["The flask is measured for one full charge and a single sip.", "The keeper warmed the spare canister under their coat the whole way up."],
+  "item-damage-core": ["Two chalk marks tell the crew where the casing will crack.", "They laid a copper wire down the steps and counted every turn."],
   basic: ["The watch keeps a fresh cup by the door for the next shift.", "Old hands can tell who came through by what was left in the dust."],
 };
 
@@ -35,7 +40,8 @@ export function draftFlavor(card, concept = "", variant = 0) {
   let seed = 0;
   for (const character of cues) seed = (Math.imul(31, seed) + character.codePointAt(0)) >>> 0;
   const opening = settings.find(([pattern]) => pattern.test(cues))?.[1] ?? scenes[card.faction] ?? scenes.veil;
-  const role = [card.active2, card.active1, card.ability].find((id) => id !== "basic" && Object.hasOwn(beats, id));
+  const role = card.kind === "item" ? `item-${card.itemEffect}`
+    : [card.active2, card.active1, card.ability].find((id) => id !== "basic" && Object.hasOwn(beats, id));
   const closing = beats[role] ?? beats.basic;
   const scene = opening[(seed + variant) % opening.length];
   const beat = closing[(Math.floor(seed / opening.length) + Math.floor(variant / opening.length)) % closing.length];

@@ -36,6 +36,7 @@
           <button type="button" class="preview-trigger" data-action="preview-card">Preview</button>
           <button type="button" id="reset-form" data-action="reset-form" hidden>New card</button>
         </div></div>
+        <div class="type-picker"><label for="card-kind">Card type</label><select name="kind" id="card-kind"><option value="unit">Unit</option><option value="item">Item</option></select></div>
         <div class="studio-grid identity-fields">
           <div class="card-field"><label for="card-name">Card name</label><input id="card-name" name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></div>
           <div class="card-field"><label for="card-faction">Element</label><select id="card-faction" name="faction"></select></div>
@@ -73,15 +74,25 @@
           <p class="field-help" id="ai-status"></p>
           <p id="draft-status" role="status"></p>
         </section>
-        <div class="studio-grid stat-fields">
-          <div class="card-field"><label for="card-cost">Deploy cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
+        <div class="card-field"><label for="card-cost" id="card-cost-label">Deploy cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
+        <div class="studio-grid stat-fields" id="unit-fields">
           <div class="card-field"><label for="card-attack">Attack</label><input id="card-attack" type="number" name="attack" min="1" max="7" required></div>
           <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="1" max="9" required></div>
           <div class="card-field wide"><label for="card-ability">Passive skill</label><select id="card-ability" name="ability"></select></div>
           <p class="field-help wide" id="ability-help"></p>
           <div class="card-field"><label for="card-active1">Active skill 1</label><select id="card-active1" name="active1"></select><p class="field-help" id="active1-help"></p></div>
           <div class="card-field"><label for="card-active2">Active skill 2</label><select id="card-active2" name="active2"></select><p class="field-help" id="active2-help"></p></div>
-          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A moment from this unit’s life"></textarea></div>
+        </div>
+        <div id="item-fields" hidden>
+          <div class="card-field"><label for="card-effect">Item effect</label><select id="card-effect" name="itemEffect"></select><p class="field-help" id="item-effect-help"></p></div>
+        </div>
+        <div class="ability-drafting">
+          <button type="button" id="ability-fill" data-action="ability-fill">Auto-fill abilities</button>
+          <p class="field-help" id="ability-draft-help"></p>
+          <p id="ability-draft-status" role="status"></p>
+        </div>
+        <div class="studio-grid">
+          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A moment from Lanternwake"></textarea></div>
           <button class="wide text-button" type="button" id="reroll-flavor" data-action="reroll-flavor">Suggest new flavor text</button>
         </div>
         <p id="budget" class="budget"></p>
@@ -112,6 +123,7 @@
         <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
         <li>Tap a ready unit to use one of its active skills or shift it to an adjacent empty lane. Some skills cost Pulse. A unit can act once per turn.</li>
         <li>Offensive skills target the opposite lane. Units trade damage when they fight. An open lane exposes the opposing Core. Passive skills apply automatically.</li>
+        <li>Play an item from your hand on your turn. Tap a highlighted unit for a targeted item, or tap Play item for a deck or Core effect. Items spend Pulse and are discarded after use.</li>
         <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 1 Core health when you would draw at the start of your turn.</li>
         <li>Reduce the rival Core to zero to win.</li>
       </ol>

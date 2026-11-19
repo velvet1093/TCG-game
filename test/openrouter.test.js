@@ -44,6 +44,20 @@ test("OpenRouter accepts a model ID and sends artwork only when included", async
   });
 });
 
+test("OpenRouter requests only ability fields for ability-only drafts", async () => {
+  const brief = { kind: "item", mode: "abilities", name: "Field Dressing", locked: {}, current: { cost: 1 } };
+  const result = await requestOpenRouterDraft(brief, {
+    apiKey: "sample-key",
+    request: async (_, options) => {
+      const sent = JSON.parse(options.body);
+      assert.deepEqual(sent.response_format.json_schema.schema.required, ["itemEffect"]);
+      assert.deepEqual(JSON.parse(sent.messages[1].content[0].text).current, { cost: 1 });
+      return Response.json({ choices: [{ message: { content: '{"itemEffect":"heal-core","cost":6}' } }] });
+    },
+  });
+  assert.deepEqual(result, { itemEffect: "heal-ally" });
+});
+
 test("OpenRouter surfaces credit, model, and malformed response errors", async () => {
   const brief = { concept: "A unit", locked: {} };
   const noCredits = { apiKey: "sample-key", request: async () => new Response(null, { status: 402 }) };

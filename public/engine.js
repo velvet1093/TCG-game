@@ -1,4 +1,4 @@
-import { ACTIVE_SKILLS, LIMITS, activeSkills, deckIssue } from "./cards.js";
+import { ACTIVE_SKILLS, ITEM_EFFECTS, LIMITS, activeSkills, deckIssue, isItem } from "./cards.js";
 
 const labels = ["You", "Rival"];
 const logLimit = 35;
@@ -13,7 +13,7 @@ function shuffle(cards, random) {
 }
 
 function createSide(deck) {
-  return { core: LIMITS.core, deck, hand: [], board: Array(LIMITS.lanes).fill(null), pulse: 0, capacity: 0 };
+  return { core: LIMITS.core, deck, hand: [], discard: [], board: Array(LIMITS.lanes).fill(null), pulse: 0, capacity: 0 };
 }
 
 function log(game, message) {
@@ -32,8 +32,11 @@ export function createGame(cards, playerDeck, rivalDeck, random = Math.random) {
     createSide(shuffle(deck.map((id) => cards.find((card) => card.id === id)), random)));
   for (const side of sides) {
     for (let i = 0; i < 4; i++) draw(side);
-    if (side.hand.every((card) => card.cost > 2)) {
-      const affordable = side.deck.findLastIndex((card) => card.cost <= 2);
+    const playableUnit = (card) => card.cost <= 2 && !isItem(card);
+    if (!side.hand.some(playableUnit)) {
+      const preferred = side.deck.findLastIndex(playableUnit);
+      const affordable = preferred === -1 && side.hand.every((card) => card.cost > 2)
+        ? side.deck.findLastIndex((card) => card.cost <= 2) : preferred;
       if (affordable !== -1) {
         [side.deck[affordable], side.hand[3]] = [side.hand[3], side.deck[affordable]];
       }
@@ -73,19 +76,42 @@ function clearLane(game, side, lane) {
   const unit = side.board[lane];
   if (unit && unit.health <= 0) {
     log(game, `${unit.card.name} was defeated.`);
+    side.discard.push(unit.card);
     side.board[lane] = null;
   }
+}
+
+function itemIssue(game, sideIndex, { hand, lane }) {
+  const side = game.sides[sideIndex];
+  const rival = game.sides[1 - sideIndex];
+  const card = side.hand[hand];
+  if (!Number.isInteger(hand) || !isItem(card)) return "Choose an item from your hand.";
+  if (card.cost > side.pulse) return "You need more Pulse.";
+  const effect = ITEM_EFFECTS[card.itemEffect];
+  if (!effect) return "This item has no effect.";
+  if (card.itemEffect === "draw" && !side.deck.length) return "Your deck is empty.";
+  if (card.itemEffect === "heal-core" && side.core >= LIMITS.core) return "Your Core is already at full health.";
+  if (effect.target === "ally" || effect.target === "enemy") {
+    const unit = (effect.target === "ally" ? side : rival).board[lane];
+    if (!Number.isInteger(lane) || lane < 0 || lane >= LIMITS.lanes || !unit) {
+      return effect.target === "ally" ? "Choose an injured allied unit." : "Choose a rival unit.";
+    }
+    if (effect.target === "ally" && unit.health >= unit.card.health) return "That unit is already at full health.";
+  }
+  return "";
 }
 
 export function actionIssue(game, sideIndex, action) {
   if (game.winner !== null) return "The duel has ended.";
   if (game.turn !== sideIndex) return "Wait for your turn.";
   if (action.type === "end") return "";
+  if (action.type === "item") return itemIssue(game, sideIndex, action);
   if (!Number.isInteger(action.lane) || action.lane < 0 || action.lane >= LIMITS.lanes) return "Choose a lane.";
   const side = game.sides[sideIndex];
   if (action.type === "deploy") {
     const card = side.hand[action.hand];
     if (!Number.isInteger(action.hand) || !card) return "Choose a card from your hand.";
+    if (isItem(card)) return "Play this item for its effect.";
     if (side.board[action.lane]) return "That lane is occupied.";
     if (card.cost > side.pulse) return "You need more Pulse.";
     return "";
@@ -108,6 +134,49 @@ export function actionIssue(game, sideIndex, action) {
   return "Unknown action.";
 }
 
+function playItem(game, sideIndex, { hand, lane }) {
+  const side = game.sides[sideIndex];
+  const rival = game.sides[1 - sideIndex];
+  const [card] = side.hand.splice(hand, 1);
+  const { amount } = ITEM_EFFECTS[card.itemEffect];
+  side.pulse -= card.cost;
+  side.discard.push(card);
+  const source = card.name;
+  switch (card.itemEffect) {
+    case "draw":
+      draw(side);
+      log(game, `${source} draws 1 card for ${sideIndex === 0 ? "you" : "the rival"}.`);
+      break;
+    case "heal-ally": {
+      const ally = side.board[lane];
+      const restored = Math.min(amount, ally.card.health - ally.health);
+      ally.health += restored;
+      log(game, `${source} restores ${restored} HP to ${ally.card.name}.`);
+      break;
+    }
+    case "damage-enemy": {
+      const unit = rival.board[lane];
+      unit.health -= amount;
+      game.impact = { side: 1 - sideIndex, lane, amount, core: false };
+      log(game, `${source} deals ${amount} damage to ${unit.card.name}.`);
+      clearLane(game, rival, lane);
+      break;
+    }
+    case "heal-core": {
+      const restored = Math.min(amount, LIMITS.core - side.core);
+      side.core += restored;
+      log(game, `${source} restores ${restored} health to ${sideIndex === 0 ? "your" : "the rival"} Core.`);
+      break;
+    }
+    case "damage-core":
+      rival.core = Math.max(0, rival.core - amount);
+      game.impact = { side: 1 - sideIndex, amount, core: true };
+      log(game, `${source} deals ${amount} damage to ${sideIndex === 0 ? "the rival" : "your"} Core.`);
+      checkWinner(game);
+      break;
+  }
+}
+
 export function act(game, sideIndex, action) {
   const issue = actionIssue(game, sideIndex, action);
   if (issue) return issue;
@@ -115,6 +184,9 @@ export function act(game, sideIndex, action) {
   const opponent = game.sides[1 - sideIndex];
   const { lane } = action;
   switch (action.type) {
+    case "item":
+      playItem(game, sideIndex, action);
+      break;
     case "end":
       game.turn = 1 - sideIndex;
       if (game.turn === 0) game.round++;
@@ -232,7 +304,7 @@ function rankBotActions(game) {
     }
     if (!unit) {
       side.hand.forEach((card, hand) => {
-        if (card.cost > side.pulse) return;
+        if (isItem(card) || card.cost > side.pulse) return;
         let score = 4 + card.cost + (target ? 0.5 : 0);
         if (card.ability === "haste" && !target) score += 3;
         if (card.ability === "ping" && target?.health === 1) score += 6;
@@ -241,6 +313,25 @@ function rankBotActions(game) {
       });
     }
   }
+  side.hand.forEach((card, hand) => {
+    if (!isItem(card)) return;
+    const effect = ITEM_EFFECTS[card.itemEffect];
+    const lanes = effect.target === "ally" || effect.target === "enemy" ? side.board.keys() : [undefined];
+    for (const lane of lanes) {
+      const action = { type: "item", hand, lane };
+      if (actionIssue(game, 1, action)) continue;
+      const ally = side.board[lane];
+      const enemy = opponent.board[lane];
+      const scores = {
+        draw: side.hand.length <= 3 ? 5.5 : 2.8,
+        "heal-ally": ally ? 1.5 + Math.min(effect.amount, ally.card.health - ally.health) : 0,
+        "damage-enemy": enemy ? enemy.health <= effect.amount ? 8 + enemy.card.cost : 3 : 0,
+        "heal-core": side.core <= 10 ? 8 : 2 + Math.min(effect.amount, LIMITS.core - side.core),
+        "damage-core": opponent.core <= effect.amount ? 100 : 3.5,
+      };
+      options.push({ score: scores[card.itemEffect], action });
+    }
+  });
   return options.filter(({ score }) => score > 0).sort((a, b) => b.score - a.score);
 }
 

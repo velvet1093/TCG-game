@@ -1,5 +1,6 @@
-import { ABILITIES, ACTIVE_SKILLS, CARD_FIELDS, FIELD_LABELS, FACTIONS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
-  activeSkills, cardIssues, deckIssue, fitDraft, lockedCardIssue, statBudget, templateDraft } from "./cards.js";
+import { ABILITIES, ACTIVE_SKILLS, FIELD_LABELS, FACTIONS, ITEM_EFFECTS, LIMITS, STARTER_CARDS, STARTER_DECK, RIVAL_DECK,
+  abilityFields, activeSkills, cardFields, cardIssues, deckIssue, fitAbilityDraft, fitDraft, isItem, lockedCardIssue,
+  statBudget, templateDraft } from "./cards.js";
 import { act, actionIssue, createGame, playRival } from "./engine.js";
 import { OPENROUTER_DEFAULT_MODEL, requestOpenRouterDraft } from "./ai-draft.js";
 import { draftFlavor } from "./lore.js";
@@ -9,7 +10,8 @@ const section = (id) => document.querySelector(`#${id}-template`).content.cloneN
 const escapeHTML = (value) => String(value ?? "").replace(/[&<>"']/g, (character) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const blankCard = () => ({
-  id: "", name: "", faction: "", cost: 2, attack: 2, health: 3, ability: "basic", active1: "strike", active2: "none",
+  id: "", kind: "unit", name: "", faction: "", cost: 2, attack: 2, health: 3,
+  ability: "basic", active1: "strike", active2: "none", itemEffect: "draw",
   flavor: "", art: "", concept: "", shareArt: false, locks: [],
 });
 let file = blankCard();
@@ -19,8 +21,10 @@ let writes = Promise.resolve();
 let storageWarning = "";
 let deckMessage = "";
 let collectionElement = "";
+let collectionKind = "";
 let formMessage = "";
 let draftMessage = "";
+let abilityMessage = "";
 let loreVariant = 0;
 let revision = 0;
 let artJob = 0;
@@ -40,7 +44,8 @@ const catalog = () => [...STARTER_CARDS, ...library.cards];
 const factionOf = (card) => Object.hasOwn(FACTIONS, card.faction) ? FACTIONS[card.faction] : null;
 const abilityOf = (card) => Object.hasOwn(ABILITIES, card.ability) ? ABILITIES[card.ability] : ABILITIES.basic;
 const mobile = matchMedia("(max-width: 610px)");
-const lockedFields = () => Object.fromEntries(CARD_FIELDS.filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
+const studioFields = [...new Set([...cardFields("unit"), ...cardFields("item")])];
+const draftFields = (mode) => mode === "abilities" ? abilityFields(file.kind) : cardFields(file.kind);
 const selectedProvider = () => draftProvider ?? (aiAvailable ? "openai" : "openrouter");
 
 function openStorage() {
@@ -101,16 +106,21 @@ function skillMarkup(id) {
 
 function cardMarkup(card) {
   const faction = factionOf(card);
-  const name = escapeHTML(card.name || "Untitled unit");
+  const item = isItem(card);
+  const kind = item ? "Item" : "Unit";
+  const effect = ITEM_EFFECTS[card.itemEffect];
+  const name = escapeHTML(card.name || `Untitled ${kind.toLowerCase()}`);
   const ability = abilityOf(card);
-  return `<article class="game-card" style="--faction: ${faction?.color ?? "#bdc8d6"}">
-    <header class="card-top"><div><span class="card-element">${faction?.icon ?? "✧"} ${faction?.name ?? "Unit"}</span><h3>${name}</h3></div>
-      <span class="card-hp" title="Health">${escapeHTML(card.health || "–")} <small>HP</small></span></header>
+  return `<article class="game-card${item ? " item-card" : ""}" style="--faction: ${faction?.color ?? "#bdc8d6"}">
+    <header class="card-top"><div><span class="card-element">${faction?.icon ?? "✧"} ${faction ? `${faction.name} · ` : ""}${kind}</span><h3>${name}</h3></div>
+      ${item ? `<span class="card-hp" title="Pulse to play">✦ ${escapeHTML(card.cost || "–")}</span>`
+        : `<span class="card-hp" title="Health">${escapeHTML(card.health || "–")} <small>HP</small></span>`}</header>
     <div class="card-window">${artMarkup(card)}</div>
     <div class="card-body">
+      ${item ? `<div class="card-skill item-effect"><div><strong>${effect?.name ?? "Choose effect"}</strong><span>One use</span></div><p>${effect?.text ?? ""}</p></div>` : `
       <div class="card-stats"><span title="Attack">⚔ ${escapeHTML(card.attack || "–")} ATK</span><span title="Deploy cost">✦ ${escapeHTML(card.cost || "–")} Deploy</span></div>
       ${card.ability !== "basic" ? `<div class="card-skill passive"><div><strong>${ability.name}</strong><span>Passive</span></div><p>${ability.text}</p></div>` : ""}
-      ${activeSkills(card).map(skillMarkup).join("")}
+      ${activeSkills(card).map(skillMarkup).join("")}`}
       ${card.flavor ? `<p class="flavor">${escapeHTML(card.flavor)}</p>` : ""}
     </div>
   </article>`;
@@ -168,18 +178,20 @@ function coreMarkup(side, index, impact) {
     <div class="core-health"><strong>${side.core}</strong><meter min="0" max="${LIMITS.core}" value="${side.core}" aria-label="${name} health"></meter></div></div>`;
 }
 
-function unitMarkup(unit, lane, own, action, impact) {
+function unitMarkup(unit, lane, own, action, impact, itemTarget) {
   if (!unit) return `<div class="empty-slot">${action || '<span aria-hidden="true">◇</span><span>Open</span>'}${impactMarkup(impact)}</div>`;
   const { card } = unit;
   const faction = factionOf(card);
   const selected = own && selection?.type === "unit" && selection.lane === lane;
-  return `<div class="unit-slot">${impactMarkup(impact)}<button type="button" class="unit${selected ? " is-selected" : ""}"
-    style="--faction: ${faction.color}" data-action="${own ? "select-unit" : "inspect-rival"}" data-lane="${lane}"
-    aria-label="${own ? "Choose actions for" : "View"} ${escapeHTML(card.name)}, ${unit.health} health"${own ? ` aria-pressed="${selected}"` : ""}>
+  const label = itemTarget ? `Use ${itemTarget.name} on ${card.name}` : `${own ? "Choose actions for" : "View"} ${card.name}, ${unit.health} health`;
+  return `<div class="unit-slot">${impactMarkup(impact)}<button type="button" class="unit${selected ? " is-selected" : ""}${itemTarget ? " item-target" : ""}"
+    style="--faction: ${faction.color}" data-action="${itemTarget ? "play-item" : own ? "select-unit" : "inspect-rival"}" data-lane="${lane}"
+    aria-label="${escapeHTML(label)}"${own && !itemTarget ? ` aria-pressed="${selected}"` : ""}>
     <span class="unit-head"><span aria-hidden="true">${faction.icon}</span><strong>${escapeHTML(card.name)}</strong></span>
     <span class="unit-art-frame">${artMarkup(card)}</span>
     <span class="unit-stats"><span title="Attack">⚔ ${card.attack}</span><span class="unit-hp" title="Health">${unit.health} HP</span></span>
-    ${own ? `<span class="ready-state ${unit.ready ? "is-ready" : ""}">${unit.ready ? "Ready" : "Exhausted"}</span>` : ""}
+    ${itemTarget ? '<span class="ready-state is-ready">Use item here</span>'
+      : own ? `<span class="ready-state ${unit.ready ? "is-ready" : ""}">${unit.ready ? "Ready" : "Exhausted"}</span>` : ""}
     </button></div>`;
 }
 
@@ -217,7 +229,11 @@ function renderArena(focus) {
   game.impact = null;
   const handScroll = arena.querySelector(".hand-rail")?.scrollLeft ?? 0;
   const logOpen = arena.querySelector(".combat-log")?.open ?? !mobile.matches;
-  const selected = selection?.type === "deploy" ? player.hand[selection.hand] : null;
+  const selected = selection?.type === "deploy" || selection?.type === "item" ? player.hand[selection.hand] : null;
+  const effect = isItem(selected) ? ITEM_EFFECTS[selected.itemEffect] : null;
+  const unitTarget = effect?.target === "ally" || effect?.target === "enemy";
+  const validTargets = unitTarget ? player.board.map((_, lane) => !actionIssue(game, 0, { ...selection, lane })) : [];
+  const instantIssue = effect && !unitTarget ? actionIssue(game, 0, selection) : "";
   const chosenUnit = selection?.type === "unit" ? player.board[selection.lane] : null;
   const result = game.winner === null ? "Your turn" : game.winner === 0 ? "Victory" : "Defeat";
   const lanes = player.board.map((unit, lane) => {
@@ -227,19 +243,23 @@ function renderArena(focus) {
       ? actionButton("Move", "shift", lane) : "";
     const hit = impact?.lane === lane && !impact.core ? impact : null;
     return `<div class="lane"><span class="lane-title">Lane ${lane + 1}</span>
-      ${unitMarkup(rival.board[lane], lane, false, "", hit?.side === 1 ? hit : null)}
+      ${unitMarkup(rival.board[lane], lane, false, "", hit?.side === 1 ? hit : null, effect?.target === "enemy" && validTargets[lane] ? selected : null)}
       <div class="lane-divider" aria-hidden="true"><span>◇</span></div>
-      ${unitMarkup(unit, lane, true, deploy || shiftHere, hit?.side === 0 ? hit : null)}</div>`;
+      ${unitMarkup(unit, lane, true, deploy || shiftHere, hit?.side === 0 ? hit : null, effect?.target === "ally" && validTargets[lane] ? selected : null)}</div>`;
   }).join("");
   const hand = player.hand.map((card, index) => {
-    const active = selection?.type === "deploy" && selection.hand === index;
+    const active = selection?.hand === index;
     return `<div class="hand-item${active ? " selected" : ""}${card.cost > player.pulse ? " unaffordable" : ""}">${cardMarkup(card)}
       <button type="button" class="hand-select" data-action="select-card" data-index="${index}" aria-label="Select ${escapeHTML(card.name)}" aria-pressed="${active}">${active ? "Selected" : "Select"}</button></div>`;
   }).join("");
-  const guidance = selection?.type === "shift" ? "Choose an adjacent open lane." : selected
-    ? selected.cost > player.pulse ? `${selected.name} needs ${selected.cost} Pulse to deploy.`
-      : player.board.every(Boolean) ? "All three lanes are occupied." : `Deploy ${selected.name} to an open lane.`
-    : "Tap a card to deploy or a unit to act.";
+  let guidance = "Tap a card to play it or a unit to act.";
+  if (selection?.type === "shift") guidance = "Choose an adjacent open lane.";
+  if (selected) {
+    if (selected.cost > player.pulse) guidance = `${selected.name} needs ${selected.cost} Pulse.`;
+    else if (!effect) guidance = player.board.every(Boolean) ? "All three lanes are occupied." : `Deploy ${selected.name} to an open lane.`;
+    else if (unitTarget && !validTargets.some(Boolean)) guidance = effect.target === "ally" ? "No injured allied units." : "No rival units to target.";
+    else guidance = instantIssue || effect.text;
+  }
   const pulsePips = Array.from({ length: Math.max(player.capacity, player.pulse) }, (_, i) =>
     `<i class="${i < player.pulse ? "charged" : ""}"></i>`).join("");
   arena.innerHTML = `<div class="arena-layout"><div>
@@ -250,6 +270,7 @@ function renderArena(focus) {
       ${chosenUnit ? unitTrayMarkup(chosenUnit, selection.lane) : ""}
       <div class="turn-controls"><p role="status">${escapeHTML(arenaMessage || (!chosenUnit && game.winner === null ? guidance : ""))}</p>
         ${selected ? `<button type="button" data-action="inspect-hand" data-index="${selection.hand}">View card</button>` : ""}
+        ${effect && !unitTarget ? `<button type="button" class="primary" data-action="play-item" ${instantIssue ? "disabled" : ""}>Play item</button>` : ""}
         ${selection?.type === "shift" ? '<button type="button" data-action="cancel">Cancel</button>' : ""}
         <button type="button" class="primary" data-action="${game.winner === null ? "end" : "duel"}">${game.winner === null ? "End turn" : "Rematch"}</button></div>
     </section>
@@ -280,7 +301,7 @@ function handleArena(button) {
   arenaMessage = "";
   if (action === "select-card") {
     const hand = Number(index);
-    selection = selection?.type === "deploy" && selection.hand === hand ? null : { type: "deploy", hand };
+    selection = selection?.hand === hand ? null : { type: isItem(game.sides[0].hand[hand]) ? "item" : "deploy", hand };
   } else if (action === "select-unit") {
     selection = selection?.type === "unit" && selection.lane === Number(lane) ? null : { type: "unit", lane: Number(lane) };
   } else if (action === "select-shift") {
@@ -288,7 +309,7 @@ function handleArena(button) {
   } else if (action === "cancel") {
     selection = null;
   } else {
-    const command = action === "deploy" ? { ...selection, lane: Number(lane) } :
+    const command = action === "deploy" || action === "play-item" ? { ...selection, lane: Number(lane) } :
       action === "shift" ? { ...selection, to: Number(lane) } : { type: action, lane: Number(lane), skill };
     arenaMessage = act(game, 0, command);
     if (!arenaMessage) {
@@ -301,17 +322,22 @@ function handleArena(button) {
 
 function renderDeck(focus) {
   const cards = catalog();
-  const visibleCards = collectionElement ? cards.filter((card) => card.faction === collectionElement) : cards;
+  const visibleCards = cards.filter((card) =>
+    (!collectionElement || card.faction === collectionElement) &&
+    (!collectionKind || isItem(card) === (collectionKind === "item")));
   const issue = deckIssue(library.deck, cards);
   const deckOpen = main.querySelector(".deck-details")?.open ?? !mobile.matches;
   const counts = new Map();
   for (const id of library.deck) counts.set(id, (counts.get(id) ?? 0) + 1);
   main.innerHTML = `<section class="page-head"><div><h1>Deck &amp; collection</h1><p>Choose the 15 cards you want to bring to the arena.</p></div>
     <div class="head-actions"><a href="#studio" class="button primary">Create a card</a></div></section>
-    <div class="deck-layout"><section><div class="section-head"><h2>Collection <small>${visibleCards.length} cards</small></h2>
+    <div class="deck-layout"><section><div class="section-head collection-head"><h2>Collection <small>${visibleCards.length} cards</small></h2>
+      <div class="collection-filters"><select id="collection-kind" aria-label="Filter collection by card type">
+        <option value="">All cards</option><option value="unit" ${collectionKind === "unit" ? "selected" : ""}>Units</option>
+        <option value="item" ${collectionKind === "item" ? "selected" : ""}>Items</option></select>
       <select id="collection-element" aria-label="Filter collection by element"><option value="">All elements</option>
         ${Object.entries(FACTIONS).map(([id, element]) => `<option value="${id}" ${collectionElement === id ? "selected" : ""}>${element.name}</option>`).join("")}</select>
-      </div><div class="collection-grid">${visibleCards.map((card) => {
+      </div></div><div class="collection-grid">${visibleCards.map((card) => {
         const id = escapeHTML(card.id);
         const name = escapeHTML(card.name);
         return `<div class="collection-item"><div class="collection-face">${cardMarkup(card)}
@@ -319,7 +345,7 @@ function renderDeck(focus) {
           </div><div class="collection-tools">
           <button type="button" data-action="add" data-id="${id}" aria-label="Add ${name}" ${library.deck.length >= LIMITS.deck || (counts.get(card.id) ?? 0) >= LIMITS.copies ? "disabled" : ""}>＋ Add</button>
           ${STARTER_CARDS.includes(card) ? "" : `<button type="button" data-action="edit" data-id="${id}" aria-label="Edit ${name}">Edit</button>`}</div></div>`;
-      }).join("")}</div></section>
+      }).join("") || '<p class="wide">No cards match these filters.</p>'}</div></section>
       <aside class="panel deck-panel"><details class="deck-details" ${deckOpen ? "open" : ""}>
         <summary class="deck-summary"><span>Active deck</span><strong>${library.deck.length} / ${LIMITS.deck}</strong></summary>
         <p>${escapeHTML(issue || "Ready to duel.")}</p>
@@ -381,6 +407,7 @@ function replaceFile(next) {
   loreVariant = 0;
   formMessage = "";
   draftMessage = "";
+  abilityMessage = "";
 }
 
 function mountStudio() {
@@ -394,7 +421,8 @@ function mountStudio() {
   for (const field of ["active1", "active2"]) {
     for (const [id, skill] of Object.entries(ACTIVE_SKILLS)) form.elements[field].append(new Option(skill.name, id));
   }
-  for (const field of CARD_FIELDS) {
+  for (const [id, effect] of Object.entries(ITEM_EFFECTS)) form.elements.itemEffect.append(new Option(effect.name, id));
+  for (const field of studioFields) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "field-lock";
@@ -409,7 +437,7 @@ function mountStudio() {
 function syncStudioFields() {
   const form = document.querySelector("#card-form");
   if (!form) return;
-  for (const key of [...CARD_FIELDS, "concept"]) form.elements[key].value = file[key];
+  for (const key of [...studioFields, "concept", "kind"]) form.elements[key].value = file[key];
   form.elements.shareArt.checked = file.shareArt;
   updateStudio();
 }
@@ -424,6 +452,14 @@ function updateStudio() {
   remove.disabled = artLoading;
   document.querySelector("#art-status").textContent = artLoading ? "Preparing artwork…" : file.art ? "Artwork attached" : "JPEG, PNG, or WebP";
   const form = document.querySelector("#card-form");
+  const item = isItem(file);
+  document.querySelector("#unit-fields").hidden = item;
+  document.querySelector("#item-fields").hidden = !item;
+  form.elements.attack.disabled = item;
+  form.elements.health.disabled = item;
+  document.querySelector("#card-cost-label").textContent = item ? "Play cost" : "Deploy cost";
+  const itemEffect = ITEM_EFFECTS[file.itemEffect];
+  document.querySelector("#item-effect-help").textContent = itemEffect?.text ?? "";
   form.elements.shareArt.disabled = !file.art || artLoading;
   form.elements.shareArt.checked = file.shareArt;
   const save = document.querySelector("#save-card");
@@ -445,8 +481,8 @@ function updateStudio() {
   const spent = (Number(file.attack) || 0) + (Number(file.health) || 0) + ability.weight;
   const available = statBudget(Number(file.cost) || 0);
   const budget = document.querySelector("#budget");
-  budget.textContent = `Stat budget ${spent} / ${available}`;
-  budget.classList.toggle("over-budget", spent > available);
+  budget.textContent = item ? `Minimum play cost · ${itemEffect?.cost ?? "–"} Pulse` : `Stat budget ${spent} / ${available}`;
+  budget.classList.toggle("over-budget", item ? file.cost < itemEffect?.cost : spent > available);
   document.querySelector("#form-status").textContent = formMessage || storageWarning;
 }
 
@@ -458,10 +494,11 @@ function updateDraftControls(form) {
   form.elements.draftProvider.value = provider;
   document.querySelector("#openrouter-settings").hidden = !router;
   document.querySelector("#draft-art-label").textContent = `Include artwork in the ${router ? "OpenRouter" : "OpenAI"} request`;
-  const allLocked = file.locks.length === CARD_FIELDS.length;
+  const allLocked = draftFields().every((field) => file.locks.includes(field));
+  const allAbilitiesLocked = draftFields("abilities").every((field) => file.locks.includes(field));
   const ai = document.querySelector("#ai-fill");
   ai.disabled = drafting || artLoading || allLocked || !ready;
-  ai.textContent = drafting ? "Drafting…" : "✦ AI auto-fill";
+  ai.textContent = drafting === "card" ? "Drafting…" : "✦ AI auto-fill";
   const quick = document.querySelector("#quick-fill");
   quick.disabled = allLocked;
   ai.classList.toggle("primary", ready);
@@ -469,6 +506,12 @@ function updateDraftControls(form) {
   document.querySelector("#ai-status").textContent = allLocked ? "All fields are locked. Unlock one to draft it."
     : "Quick fill uses built-in templates and works without an API key.";
   document.querySelector("#draft-status").textContent = draftMessage;
+  const abilityButton = document.querySelector("#ability-fill");
+  abilityButton.disabled = Boolean(drafting || artLoading || allAbilitiesLocked);
+  abilityButton.textContent = drafting === "abilities" ? "Drafting…" : isItem(file) ? "Auto-fill item effect" : "Auto-fill abilities";
+  document.querySelector("#ability-draft-help").textContent = allAbilitiesLocked ? "Unlock an ability field to draft it."
+    : ready ? `Uses ${provider === "openrouter" ? "OpenRouter" : "OpenAI"} to draft only these fields.` : "Uses built-in suggestions when AI is unavailable.";
+  document.querySelector("#ability-draft-status").textContent = abilityMessage;
 }
 
 async function readArtwork(artwork) {
@@ -506,52 +549,65 @@ async function readArtwork(artwork) {
   }
 }
 
-function applyDraft(draft, locked) {
-  const result = fitDraft(draft, locked);
+function applyDraft(draft, brief) {
+  const result = brief.mode === "abilities" ? fitAbilityDraft(draft, brief) : fitDraft(draft, brief.locked, brief.kind);
   revision++;
-  for (const key of CARD_FIELDS) {
-    if (!Object.hasOwn(locked, key)) file[key] = result[key];
+  for (const key of draftFields(brief.mode)) {
+    if (!Object.hasOwn(brief.locked, key)) file[key] = result[key];
   }
   syncStudioFields();
 }
 
-function draftBrief() {
-  const locked = lockedFields();
-  const issue = lockedCardIssue(locked);
+function draftBrief(mode) {
+  const locked = Object.fromEntries(draftFields(mode).filter((key) => file.locks.includes(key)).map((key) => [key, file[key]]));
+  const issue = lockedCardIssue(locked, file.kind);
   if (issue) throw new Error(issue);
-  return { name: file.name.trim(), faction: file.faction, concept: file.concept.trim(), locked };
+  const current = mode === "abilities" ? {
+    cost: file.cost, attack: isItem(file) ? undefined : file.attack, health: isItem(file) ? undefined : file.health,
+    flavor: file.flavor.trim(),
+  } : undefined;
+  return { name: file.name.trim(), faction: file.faction, concept: file.concept.trim(), locked, kind: file.kind, mode, current };
 }
 
-function quickFill() {
+function setDraftMessage(mode, message) {
+  if (mode === "abilities") abilityMessage = message;
+  else draftMessage = message;
+}
+
+function quickFill(mode) {
   try {
-    const brief = draftBrief();
-    applyDraft(templateDraft({ ...brief, variant: loreVariant++ }), brief.locked);
-    draftMessage = "Quick fill applied. Review the draft before saving.";
+    const brief = draftBrief(mode);
+    applyDraft(templateDraft({ ...brief, variant: loreVariant++ }), brief);
+    setDraftMessage(mode, mode === "abilities" ? "Ability suggestions applied." : "Quick fill applied. Review the draft before saving.");
   } catch (error) {
-    draftMessage = error.message;
+    setDraftMessage(mode, error.message);
   }
   updateStudio();
 }
 
-async function autoFill() {
+async function autoFill(mode) {
   const useRouter = selectedProvider() === "openrouter";
-  if (drafting || !(useRouter ? openRouterKey.trim() : aiAvailable)) return;
+  if (drafting) return;
+  if (!(useRouter ? openRouterKey.trim() : aiAvailable)) {
+    if (mode === "abilities") quickFill(mode);
+    return;
+  }
   let brief;
   try {
-    brief = { ...draftBrief(), art: file.shareArt ? file.art : "" };
+    brief = { ...draftBrief(mode), art: file.shareArt ? file.art : "" };
   } catch (error) {
-    draftMessage = error.message;
+    setDraftMessage(mode, error.message);
     updateStudio();
     return;
   }
-  if (!brief.name && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
-    draftMessage = "Add a name, faction, or concept, lock a value, or choose to include artwork.";
+  if (mode !== "abilities" && !brief.name && !brief.faction && !brief.concept && !brief.art && !Object.keys(brief.locked).length) {
+    setDraftMessage(mode, "Add a name, element, or concept, lock a value, or choose to include artwork.");
     updateStudio();
     return;
   }
   const requestRevision = revision;
-  drafting = true;
-  draftMessage = "";
+  drafting = mode ?? "card";
+  setDraftMessage(mode, "");
   updateStudio();
   try {
     let draft;
@@ -568,10 +624,10 @@ async function autoFill() {
       draft = data.draft;
     }
     if (revision !== requestRevision) return;
-    applyDraft(draft, brief.locked);
-    draftMessage = "AI draft applied. Review the fields before saving.";
+    applyDraft(draft, brief);
+    setDraftMessage(mode, mode === "abilities" ? "AI ability suggestions applied." : "AI draft applied. Review the fields before saving.");
   } catch (error) {
-    if (revision === requestRevision) draftMessage = error.message || "AI auto-fill is unavailable.";
+    if (revision === requestRevision) setDraftMessage(mode, error.message || "AI auto-fill is unavailable.");
   } finally {
     drafting = false;
     updateStudio();
@@ -581,10 +637,12 @@ async function autoFill() {
 async function saveCard(event) {
   event.preventDefault();
   if (saving || artLoading) return;
-  const card = { ...file, name: file.name.trim(), flavor: file.flavor.trim() };
-  card.id ||= crypto.randomUUID();
-  delete card.concept;
-  delete card.shareArt;
+  const fields = cardFields(file.kind);
+  const card = {
+    ...Object.fromEntries(fields.map((key) => [key, file[key]])),
+    id: file.id || crypto.randomUUID(), kind: file.kind, art: file.art, locks: file.locks.filter((key) => fields.includes(key)),
+    name: file.name.trim(), flavor: file.flavor.trim(),
+  };
   const issue = cardIssues(card)[0];
   if (issue) {
     formMessage = issue;
@@ -624,6 +682,7 @@ main.addEventListener("click", (event) => {
       file.locks = file.locks.includes(field) ? file.locks.filter((key) => key !== field) : [...file.locks, field];
       revision++;
       draftMessage = "";
+      abilityMessage = "";
       updateStudio();
       break;
     }
@@ -653,6 +712,9 @@ main.addEventListener("click", (event) => {
     case "ai-fill":
       void autoFill();
       break;
+    case "ability-fill":
+      void autoFill("abilities");
+      break;
   }
 });
 
@@ -663,6 +725,7 @@ main.addEventListener("input", (event) => {
   revision++;
   formMessage = "";
   draftMessage = "";
+  abilityMessage = "";
   if (id === "openrouter-key" || name === "openRouterModel") {
     draftProvider = "openrouter";
     if (id === "openrouter-key") openRouterKey = value;
@@ -681,10 +744,11 @@ main.addEventListener("input", (event) => {
 });
 
 main.addEventListener("change", (event) => {
-  if (event.target.id === "collection-element") {
-    collectionElement = event.target.value;
+  if (event.target.id === "collection-element" || event.target.id === "collection-kind") {
+    if (event.target.id === "collection-element") collectionElement = event.target.value;
+    else collectionKind = event.target.value;
     renderDeck();
-    document.querySelector("#collection-element").focus({ preventScroll: true });
+    document.getElementById(event.target.id).focus({ preventScroll: true });
   }
   if (event.target.matches('[name="artwork"]') && event.target.files[0]) void readArtwork(event.target.files[0]);
 });

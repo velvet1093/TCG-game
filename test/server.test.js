@@ -56,6 +56,23 @@ test("a provider error returns a usable studio error", async (t) => {
   assert.match((await response.json()).error, /Quick fill/);
 });
 
+test("the local provider drafts items without unit fields", async (t) => {
+  const url = await boot(t, {
+    apiKey: "test",
+    request: async (_, { body }) => {
+      const sent = JSON.parse(body);
+      assert.deepEqual(sent.text.format.schema.required, ["name", "faction", "cost", "itemEffect", "flavor"]);
+      const draft = { name: "Flash Charge", faction: "ember", cost: 1, itemEffect: "damage-enemy", flavor: "One red fuse." };
+      return Response.json({ status: "completed", output: [{ content: [{ type: "output_text", text: JSON.stringify(draft) }] }] });
+    },
+  });
+  const response = await post(url, { kind: "item", concept: "damage a rival unit", locked: {} });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).draft, {
+    kind: "item", name: "Flash Charge", faction: "ember", cost: 2, itemEffect: "damage-enemy", flavor: "One red fuse.",
+  });
+});
+
 test("AI receives the locks as context and fits its result around them", async (t) => {
   const requests = [];
   const url = await boot(t, {
