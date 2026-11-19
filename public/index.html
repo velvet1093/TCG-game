@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#110e17">
+  <meta name="theme-color" content="#101823">
   <meta name="description" content="Build your deck, create your own cards, and play an original three-lane card duel.">
   <title>Lanternwake Arena</title>
   <link rel="stylesheet" href="/styles.css">
@@ -36,9 +36,23 @@
           <button type="button" class="preview-trigger" data-action="preview-card">Preview</button>
           <button type="button" id="reset-form" data-action="reset-form" hidden>New card</button>
         </div></div>
+        <div class="type-picker"><label for="card-kind">Card type</label><select name="kind" id="card-kind"><option value="unit">Unit</option><option value="item">Item</option></select></div>
         <div class="studio-grid identity-fields">
           <div class="card-field"><label for="card-name">Card name</label><input id="card-name" name="name" maxlength="44" required placeholder="e.g. Lanternblade Ronin"></div>
-          <div class="card-field"><label for="card-faction">Faction</label><select id="card-faction" name="faction"></select></div>
+          <div class="card-field"><label for="card-faction">Element</label><select id="card-faction" name="faction"></select></div>
+          <div class="card-field wide"><label for="card-rarity">Rarity</label><select id="card-rarity" name="rarity" aria-describedby="rarity-help"></select>
+            <p class="field-help" id="rarity-help"></p></div>
+          <div class="wide evolution-fields" id="evolution-fields">
+            <label for="card-stage">Stage</label>
+            <select id="card-stage" name="stage" aria-describedby="stage-help">
+              <option value="1">Stage 1 · Base</option><option value="2">Stage 2</option><option value="3">Stage 3</option>
+            </select>
+            <div id="evolves-from-field" hidden>
+              <label for="card-evolves-from">Evolves from</label>
+              <select id="card-evolves-from" name="evolvesFrom" aria-describedby="stage-help"></select>
+            </div>
+            <p class="field-help" id="stage-help"></p>
+          </div>
           <label class="wide">Your artwork<input type="file" name="artwork" accept="image/jpeg,image/png,image/webp">
             <span class="field-help" id="art-status">JPEG, PNG, or WebP</span></label>
           <button class="wide text-button" type="button" id="remove-art" data-action="remove-art" hidden>Remove artwork</button>
@@ -46,6 +60,9 @@
         <section class="draft-box" aria-labelledby="draft-title">
           <h3 id="draft-title">Auto-fill</h3>
           <p class="field-help">Tap Lock beside a field to keep its value and use it as context for the draft.</p>
+          <label for="draft-character">Character name <span class="optional">(optional)</span></label>
+          <input name="character" id="draft-character" maxlength="80" placeholder="Name the character if you know it" aria-describedby="character-help">
+          <p class="field-help" id="character-help">Add their series or version to the concept for more specific moves and flavor.</p>
           <label>Concept <span class="optional">(optional)</span><textarea name="concept" maxlength="600" rows="2" placeholder="A forest guardian who shields the lane"></textarea></label>
           <label>AI provider
             <select name="draftProvider">
@@ -73,13 +90,30 @@
           <p class="field-help" id="ai-status"></p>
           <p id="draft-status" role="status"></p>
         </section>
-        <div class="studio-grid stat-fields">
-          <div class="card-field"><label for="card-cost">Pulse cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
-          <div class="card-field"><label for="card-attack">Attack</label><input id="card-attack" type="number" name="attack" min="1" max="7" required></div>
-          <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="1" max="9" required></div>
-          <div class="card-field wide"><label for="card-ability">Ability</label><select id="card-ability" name="ability"></select></div>
+        <div class="card-field"><label for="card-cost" id="card-cost-label">Deploy cost</label><input id="card-cost" type="number" name="cost" min="1" max="6" required></div>
+        <div class="studio-grid stat-fields" id="unit-fields">
+          <div class="card-field"><label for="card-attack">Attack</label><input id="card-attack" type="number" name="attack" min="10" max="270" step="10" required></div>
+          <div class="card-field"><label for="card-health">Health</label><input id="card-health" type="number" name="health" min="10" max="1000" step="10" required></div>
+          <div class="card-field wide"><label for="card-ability">Passive skill</label><select id="card-ability" name="ability"></select></div>
           <p class="field-help wide" id="ability-help"></p>
-          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A line of lore or dialogue"></textarea></div>
+          <div class="wide attack-editors" id="attack-editors"></div>
+          <div class="wide ability-drafting">
+            <button type="button" id="effects-fill" data-action="effects-fill">Auto-fill effects</button>
+            <p class="field-help" id="effects-draft-help">Name an attack, then draft its combat effects.</p>
+            <p id="effects-draft-status" role="status"></p>
+          </div>
+        </div>
+        <div id="item-fields" hidden>
+          <div class="card-field"><label for="card-effect">Item effect</label><select id="card-effect" name="itemEffect"></select><p class="field-help" id="item-effect-help"></p></div>
+        </div>
+        <div class="ability-drafting">
+          <button type="button" id="ability-fill" data-action="ability-fill">Auto-fill abilities</button>
+          <p class="field-help" id="ability-draft-help"></p>
+          <p id="ability-draft-status" role="status"></p>
+        </div>
+        <div class="studio-grid">
+          <div class="card-field wide"><label for="card-flavor">Flavor text</label><textarea id="card-flavor" name="flavor" maxlength="140" rows="2" placeholder="A moment from Lanternwake"></textarea></div>
+          <button class="wide text-button" type="button" id="reroll-flavor" data-action="reroll-flavor">Suggest new flavor text</button>
         </div>
         <p id="budget" class="budget"></p>
         <p id="form-status" role="status" aria-live="polite"></p>
@@ -96,15 +130,22 @@
       <div id="dialog-preview"></div>
     </dialog>
   </template>
+  <dialog id="inspect-card" aria-labelledby="inspect-title">
+    <form method="dialog" class="studio-heading"><h2 id="inspect-title">Card details</h2><button aria-label="Close card details">Close</button></form>
+    <div id="inspect-content"></div>
+  </dialog>
   <dialog id="rules">
     <form method="dialog">
       <div class="studio-heading"><h2>How to play</h2><button aria-label="Close rules" value="close">Close</button></div>
       <ol>
-        <li>Each Core starts at 20 health. Bring 15 cards and up to 3 copies of each card.</li>
+        <li>Each Core starts at 300 health. Bring 15 cards and up to 3 copies of each card.</li>
         <li>Start with 4 cards and 2 Pulse. Your opening hand includes an affordable card if your deck has one. At the start of each turn, draw a card and refill Pulse. The first player skips the opening draw. Capacity grows by 1 each round, up to 6.</li>
-        <li>Select a card, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
-        <li>Each ready unit can strike straight across its lane or shift into an adjacent empty lane. Units trade damage on a strike. An open lane exposes the opposing Core.</li>
-        <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 1 Core health when you would draw at the start of your turn.</li>
+        <li>Select a Stage 1 unit, then deploy it to an empty lane. Units can act on their next turn. Units with Rush can act immediately.</li>
+        <li>After three of your turns have started since a unit was deployed or last evolved, select its linked next stage from your hand and tap the unit to evolve it. Pay the new card’s Pulse cost. Each stage keeps the unit’s damage and action state.</li>
+        <li>Tap a ready unit to choose one of its attacks or shift to an adjacent empty lane. The attack’s effects determine its Pulse cost. A unit can act once per turn.</li>
+        <li>Offensive skills target the opposite lane. Units trade damage when they fight. An open lane exposes the opposing Core. Passive skills apply automatically.</li>
+        <li>Play an item from your hand on your turn. Tap a highlighted unit for a targeted item, or tap Play item for a deck or Core effect. Items spend Pulse and are discarded after use.</li>
+        <li>Strike in two distinct lanes in a turn to gain 1 bonus Pulse. An empty deck costs 10 Core health when you would draw at the start of your turn.</li>
         <li>Reduce the rival Core to zero to win.</li>
       </ol>
     </form>

@@ -1,63 +1,23 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { CARD_FIELDS, FACTIONS, lockedCardIssue } from "./public/cards.js";
-import { draftInstructions, draftSchema, draftText, normalizeDraft } from "./public/ai-draft.js";
+import { readDraftRequest } from "./draft-request.js";
+import { draftInstructionsFor, draftSchemaFor, draftText, normalizeDraft } from "./public/ai-draft.js";
 
 const assets = {
   "/": ["index.html", "text/html"],
   "/app.js": ["app.js", "text/javascript"],
   "/ai-draft.js": ["ai-draft.js", "text/javascript"],
+  "/attacks.js": ["attacks.js", "text/javascript"],
   "/cards.js": ["cards.js", "text/javascript"],
   "/engine.js": ["engine.js", "text/javascript"],
+  "/lore.js": ["lore.js", "text/javascript"],
   "/styles.css": ["styles.css", "text/css"],
 };
 
 function respond(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(data));
-}
-
-async function readDraftRequest(req) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > 1_550_000) {
-      const error = new Error("Artwork is too large for auto-fill.");
-      error.status = 413;
-      throw error;
-    }
-    chunks.push(chunk);
-  }
-  const data = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  const trim = (value, max) => typeof value === "string" ? value.trim().slice(0, max) : "";
-  const name = trim(data?.name, 44);
-  const concept = trim(data?.concept, 600);
-  const faction = typeof data?.faction === "string" && Object.hasOwn(FACTIONS, data.faction) ? data.faction : "";
-  const art = typeof data?.art === "string" ? data.art : "";
-  if (art && !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(art)) {
-    throw new Error("Use JPEG, PNG, or WebP artwork.");
-  }
-  let locked;
-  if (data?.locked === undefined) {
-    // Clients predating the lock controls treated a supplied name or faction as fixed.
-    locked = { ...(name && { name }), ...(faction && { faction }) };
-  } else {
-    if (!data.locked || Array.isArray(data.locked) || typeof data.locked !== "object" ||
-        Object.keys(data.locked).some((key) => !CARD_FIELDS.includes(key))) {
-      throw new Error("Choose valid card fields to lock.");
-    }
-    locked = data.locked;
-  }
-  const issue = lockedCardIssue(locked);
-  if (issue) throw new Error(issue);
-  const lockCount = Object.keys(locked).length;
-  if (lockCount === CARD_FIELDS.length) throw new Error("Unlock a field for auto-fill.");
-  if (!name && !concept && !faction && !art && !lockCount) {
-    throw new Error("Add a name, concept, faction, artwork, or locked field first.");
-  }
-  return { name, concept, faction, art, locked };
 }
 
 async function requestDraft(input, { apiKey, model, request }) {
@@ -71,10 +31,10 @@ async function requestDraft(input, { apiKey, model, request }) {
     body: JSON.stringify({
       model,
       store: false,
-      instructions: draftInstructions,
+      instructions: draftInstructionsFor(input),
       input: [{ role: "user", content }],
-      text: { format: { type: "json_schema", name: "arena_card", strict: true, schema: draftSchema } },
-      max_output_tokens: 600,
+      text: { format: { type: "json_schema", name: "arena_card", strict: true, schema: draftSchemaFor(input) } },
+      max_output_tokens: 800,
     }),
   });
   if (!response.ok) throw new Error("Provider error");
@@ -82,7 +42,7 @@ async function requestDraft(input, { apiKey, model, request }) {
   if (body.status !== "completed") throw new Error("Incomplete model response");
   const output = body.output?.flatMap((item) => item.content ?? [])
     .filter((part) => part.type === "output_text").map((part) => part.text).join("");
-  return normalizeDraft(JSON.parse(output), input.locked);
+  return normalizeDraft(JSON.parse(output), input);
 }
 
 export function makeServer({
